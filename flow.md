@@ -1,4 +1,4 @@
-
+Optimize-ram V1
 
   RAM tong: 31.69 GB   Dang ranh: 23.58 GB
 
@@ -60,4 +60,6 @@
   Dang dung     : 4.38 GB  (13.8 %)
 
   Luu y: Restart may de service changes co hieu luc day du.
+
+Optimize-ram V2
 
