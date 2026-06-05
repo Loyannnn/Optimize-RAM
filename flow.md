@@ -64,6 +64,117 @@ Optimize-ram V1
 Optimize-ram V2
 
 
+  ╔══════════════════════════════════════════════════╗
+  ║       TOI UU RAM WINDOWS 11 -- Version 2.0      ║
+  ║         Nhan dien hang + Tat dich vu hang        ║
+  ╚══════════════════════════════════════════════════╝
+
+  May:    Dell Inc.  |  Precision 7670
+  BIOS:   Dell Inc.  1.36.0
+  CPU:    12th Gen Intel(R) Core(TM) i9-12950HX
+  RAM:    31.69 GB    |    Dang ranh: 25.33 GB
+
+  *** Phat hien hang may: [ DELL ] ***
+
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 1: Xa Standby List + kernel cache         │
+  └─────────────────────────────────────────────────┘
+  [OK] Flush Modified List (dirty -> standby)
+  [OK] Purge Standby List (giai phong cache kernel)
+  [OK] Empty Working Sets (tat ca tien trinh)
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 2: Xa File System Cache                   │
+  └─────────────────────────────────────────────────┘
+  Cache hien tai:  min=1 MB   max=16777216 MB
+  [OK] File system cache da xa
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 3: Trim Working Set tat ca tien trinh     │
+  └─────────────────────────────────────────────────┘
+  [OK] Trim xong:   189 tien trinh
+  [OK] Giai phong:  ~3862 MB
+  [--] Bo qua:       3 tien trinh he thong
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 4: Tat dich vu he thong khong can thiet   │
+  └─────────────────────────────────────────────────┘
+  >> Dang xu ly dich vu Windows chung...
+  [OFF  ] icssvc                                  -- Windows Mobile Hotspot
+  [OFF  ] MessagingService                        -- Messaging Service
+  [OFF  ] RetailDemo                              -- Retail Demo
+  [OFF  ] TapiSrv                                 -- Telephony
+  [OFF  ] Fax                                     -- Fax Service
+  [OFF  ] EntAppSvc                               -- Enterprise App Management
+  [OFF  ] dmwappushservice                        -- WAP Push Message Routing (telemetry)
+  [OFF  ] PrintNotify                             -- Print Spooler Extension (neu khong in)
+  [OFF  ] DiagTrack                               -- Windows Diagnostic Tracking (telemetry Microsoft)
+  [OFF  ] WalletService                           -- WalletService
+  [OFF  ] MapsBroker                              -- Downloaded Maps Manager
+  [OFF  ] WSearch                                 -- Windows Search (index file)
+  [OFF  ] XboxNetApiSvc                           -- Xbox Network API
+  [OFF  ] wisvc                                   -- Windows Insider Service
+  [OFF  ] lfsvc                                   -- Geolocation (GPS)
+  [OFF  ] WbioSrvc                                -- Windows Biometric Service
+  [OFF  ] XboxGipSvc                              -- Xbox Accessories Service
+  [OFF  ] WerSvc                                  -- Windows Error Reporting
+  [OFF  ] wercplsupport                           -- Windows Error Reporting UI
+  [OFF  ] XblGameSave                             -- Xbox Game Save
+  [OFF  ] XblAuthManager                          -- Xbox Auth Manager
+  [OFF  ] OneSyncSvc                              -- Sync Host (neu khong dung mail/calendar)
+  >> Da xu ly: 22 dich vu
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 5: Tat dich vu theo hang may [DELL]       │
+  └─────────────────────────────────────────────────┘
+  >> Hang may da nhan dien: DELL
+
+  [OFF  ] DellClientManagementService             -- Dell Client Management Service
+
+  >> Tong dich vu hang [DELL] da xu ly: 1
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 6: Scan dich vu hang khac trong he thong  │
+  └─────────────────────────────────────────────────┘
+  [OK] Khong phat hien them dich vu hang nao.
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 7: Toi uu Registry Memory + Tat Telemetry │
+  └─────────────────────────────────────────────────┘
+  [OK] Memory Management registry da toi uu
+  [OK] Windows Telemetry da tat qua policy registry
+  [OK] Visual Effects -> Best Performance
+
+  ┌─────────────────────────────────────────────────┐
+  │  BUOC 8: Don file rac he thong                  │
+  └─────────────────────────────────────────────────┘
+  [OK] Don: C:\Users\PRECIS~1\AppData\Local\Temp  (17 item)
+  [OK] Don: C:\Windows\Temp  (1 item)
+  [OK] Don: C:\Windows\Prefetch  (0 item)
+  [OK] Don: C:\Users\Precision\AppData\Local\Temp  (9 item)
+  [OK] Windows Update cache da don
+  [OK] DNS Cache da flush
+
+  ╔══════════════════════════════════════════════════╗
+  ║                   TONG KET                      ║
+  ╚══════════════════════════════════════════════════╝
+
+  Hang may     :  DELL
+  Tong RAM     :  31.69 GB
+  Truoc        :  ranh 25.33 GB
+  Sau          :  ranh 26.55 GB
+  Giai phong   :  +1.22 GB
+  Dang dung    :  5.14 GB  (16.2%)
+
+  ─────────────────────────────────────────────────
+  [!] Mot so thay doi co hieu luc sau khi RESTART.
+  [!] Cac dich vu hang da tat (Disabled) se khong tu khoi dong lai.
+  [!] Neu may mat chuc nang nao do, dung Services.msc bat lai.
+  ─────────────────────────────────────────────────
+
+Press Enter to continue...:
+
 
 Optimize-ram V3
 
