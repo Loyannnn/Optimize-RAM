@@ -1,24 +1,24 @@
 # ==========================================================================
-#  Optimize-RAM-v3.ps1  |  GOD MODE
-#  Ho tro: Windows 10 (1809+) & Windows 11
-#  Phien ban: 3.0
+#  Optimize-RAM-v3-EN.ps1  |  GOD MODE
+#  Supports: Windows 10 (1809+) & Windows 11
+#  Version: 3.0 (English)
 #  --------------------------------------------------------------------------
-#  TINH NANG:
-#   [0]  Nhan dien Win10 / Win11, build number, kich hoat tinh nang phu hop
-#   [1]  Xa Standby List, Modified List, Working Sets (kernel-level)
-#   [2]  Xa File System Cache
-#   [3]  Trim Working Set toan bo tien trinh
-#   [4]  Nhan dien hang may (Dell/HP/Lenovo/ASUS/MSI/Acer/Samsung/...)
-#   [5]  Tat dich vu Windows chung + rieng theo Win10/Win11
-#   [6]  Tat dich vu hang may (danh sach rieng tung hang)
-#   [7]  Scan keyword tat dich vu hang con sot
-#   [8]  Tat Startup Registry + Task Scheduler cua hang
-#   [9]  Registry: Memory Mgmt, Telemetry, Visual FX, TCP, GameDVR
-#   [10] Don file rac: Temp, Prefetch, WU, INet, Thumbnail, EventLog
-#   [11] Toi uu dac biet Win11 (Widgets, WSA, Chat) / Win10 (Timeline)
-#   [12] Xuat LOG bao cao chi tiet ra Desktop
+#  FEATURES:
+#   [0]  Detect Win10 / Win11, build number, activate version-specific tweaks
+#   [1]  Flush Standby List, Modified List, Working Sets (kernel-level)
+#   [2]  Flush File System Cache
+#   [3]  Trim Working Set of all running processes
+#   [4]  Auto-detect PC brand (Dell/HP/Lenovo/ASUS/MSI/Acer/Samsung/...)
+#   [5]  Disable unnecessary Windows services (common + per-version)
+#   [6]  Disable vendor services (per-brand service list)
+#   [7]  Keyword scan to catch remaining vendor services
+#   [8]  Disable vendor Startup Registry entries + Scheduled Tasks
+#   [9]  Registry tweaks: Memory Mgmt, Telemetry, Visual FX, TCP, GameDVR
+#   [10] Deep junk cleanup: Temp, Prefetch, WU cache, INet, Thumbnail, EventLog
+#   [11] Version-specific tweaks: Win11 (Widgets, WSA, Chat) / Win10 (Timeline)
+#   [12] Export detailed LOG report to Desktop
 #  --------------------------------------------------------------------------
-#  Yeu cau: PowerShell 5.1+  |  Administrator
+#  Requirements: PowerShell 5.1+  |  Administrator rights
 # ==========================================================================
 
 #Requires -Version 5.1
@@ -28,16 +28,16 @@ $ErrorActionPreference = "SilentlyContinue"
 # ---- Admin guard ----
 $_ap = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $_ap.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "[!] Can quyen Administrator!" -ForegroundColor Red
-    Write-Host "    Nhan chuot PHAI vao file .bat -> Run as administrator" -ForegroundColor Yellow
+    Write-Host "[!] Administrator rights required!" -ForegroundColor Red
+    Write-Host "    Right-click the .bat file and select: Run as administrator" -ForegroundColor Yellow
     Start-Sleep 3; exit 1
 }
 
 # ==========================================================================
-# BIEN TOAN CUC
+# GLOBAL VARIABLES
 # ==========================================================================
-$Script:LogLines   = [System.Collections.Generic.List[string]]::new()
-$Script:LogFile    = "$env:USERPROFILE\Desktop\RAM-Optimize-Log-$(Get-Date -f 'yyyyMMdd-HHmmss').txt"
+$Script:LogLines     = [System.Collections.Generic.List[string]]::new()
+$Script:LogFile      = "$env:USERPROFILE\Desktop\RAM-Optimize-Log-$(Get-Date -f 'yyyyMMdd-HHmmss').txt"
 $Script:taskDisabled = 0
 
 function Write-Log {
@@ -56,14 +56,14 @@ function Show-Section {
 }
 
 # ==========================================================================
-# PHAN 0 -- NHAN DIEN HE THONG
+# SECTION 0 -- SYSTEM DETECTION
 # ==========================================================================
 Clear-Host
 Write-Log ""
 Write-Log "  +========================================================+" "Cyan"
-Write-Log "  |    TOI UU RAM  --  GOD MODE  v3.0                     |" "Cyan"
-Write-Log "  |    Ho tro: Windows 10 (1809+) & Windows 11            |" "Cyan"
-Write-Log "  |    Nhan dien hang + Tat dich vu + Don sach he thong   |" "Cyan"
+Write-Log "  |    RAM OPTIMIZER  --  GOD MODE  v3.0 (EN)             |" "Cyan"
+Write-Log "  |    Supports: Windows 10 (1809+) & Windows 11          |" "Cyan"
+Write-Log "  |    Brand detection + Service killer + Deep cleanup     |" "Cyan"
 Write-Log "  +========================================================+" "Cyan"
 Write-Log ""
 
@@ -83,19 +83,19 @@ $free0 = [math]::Round($os0.FreePhysicalMemory    / 1MB, 2)
 $total = [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2)
 $ramGB = [math]::Round($cs.TotalPhysicalMemory     / 1GB, 1)
 
-Write-Log ("  OS    :  {0}" -f $winName) "White"
-Write-Log ("  Build :  {0}  [{1}]" -f $winBuild, $winTag) "White"
-Write-Log ("  May   :  {0}  |  {1}" -f $cs.Manufacturer, $cs.Model) "White"
-Write-Log ("  BIOS  :  {0}  {1}"   -f $bios.Manufacturer, ($bios.SMBIOSBIOSVersion -join " ")) "White"
-Write-Log ("  CPU   :  {0}" -f $cpu.Name) "White"
-Write-Log ("  RAM   :  {0} GB (Physical)  |  Dang ranh: {1} GB" -f $ramGB, $free0) "White"
+Write-Log ("  OS      :  {0}" -f $winName) "White"
+Write-Log ("  Build   :  {0}  [{1}]" -f $winBuild, $winTag) "White"
+Write-Log ("  Machine :  {0}  |  {1}" -f $cs.Manufacturer, $cs.Model) "White"
+Write-Log ("  BIOS    :  {0}  {1}" -f $bios.Manufacturer, ($bios.SMBIOSBIOSVersion -join " ")) "White"
+Write-Log ("  CPU     :  {0}" -f $cpu.Name) "White"
+Write-Log ("  RAM     :  {0} GB (Physical)  |  Currently free: {1} GB" -f $ramGB, $free0) "White"
 Write-Log ""
 
 if ($winTag -eq "WIN_OLD") {
-    Write-Log "  [!] Windows build qua cu (<1809). Mot so tinh nang co the khong hoat dong." "Yellow"
+    Write-Log "  [!] Windows build too old (<1809). Some features may not work correctly." "Yellow"
 }
 
-# --- Nhan dien hang may ---
+# --- Brand detection ---
 $mfrRaw  = ($cs.Manufacturer + " " + $cs.Model).ToLower()
 $biosRaw = ($bios.Manufacturer + " " + ($bios.SMBIOSBIOSVersion -join " ")).ToLower()
 
@@ -149,13 +149,14 @@ $brandColor = switch ($brand) {
     default              { "Yellow"   }
 }
 
-Write-Log ("  [*] Hang may nhan dien: [ {0} ]  (nguon: {1})" -f $brand, $brandSrc) $brandColor
+Write-Log ("  [*] Detected brand: [ {0} ]  (source: {1})" -f $brand, $brandSrc) $brandColor
 Write-Log ""
 
 # ==========================================================================
-# DANH SACH DICH VU
+# SERVICE LISTS
 # ==========================================================================
 
+# ---------- Common (Win10 + Win11) ----------
 $svcsCommon = [ordered]@{
     "DiagTrack"              = "Connected User Experiences & Telemetry (Microsoft)"
     "dmwappushservice"       = "WAP Push Message Routing (telemetry)"
@@ -175,30 +176,31 @@ $svcsCommon = [ordered]@{
     "WalletService"          = "Wallet Service"
     "EntAppSvc"              = "Enterprise App Management"
     "MessagingService"       = "Messaging Service"
-    "OneSyncSvc"             = "Sync Host (mail/calendar)"
+    "OneSyncSvc"             = "Sync Host (mail/calendar sync)"
     "WSearch"                = "Windows Search Indexing"
     "SysMain"                = "SysMain / Superfetch"
     "RemoteRegistry"         = "Remote Registry"
     "RemoteAccess"           = "Routing and Remote Access"
     "SharedAccess"           = "Internet Connection Sharing"
-    "TermService"            = "Remote Desktop Services (neu khong dung RDP)"
+    "TermService"            = "Remote Desktop Services (disable if not using RDP)"
     "SessionEnv"             = "Remote Desktop Configuration"
     "UmRdpService"           = "Remote Desktop Device Redirector"
     "ScDeviceEnum"           = "Smart Card Device Enumeration"
     "SCardSvr"               = "Smart Card"
     "SCPolicySvc"            = "Smart Card Removal Policy"
     "MixedRealityOpenXRSvc"  = "Mixed Reality OpenXR"
-    "WbioSrvc"               = "Windows Biometric"
+    "WbioSrvc"               = "Windows Biometric Service"
     "PhoneSvc"               = "Phone Service"
     "PimIndexMaintenanceSvc" = "Contact Data"
     "UnistoreSvc"            = "User Data Storage"
     "UserDataSvc"            = "User Data Access"
     "PrintNotify"            = "Printer Extensions & Notifications"
-    "Spooler"                = "Print Spooler (neu khong in)"
+    "Spooler"                = "Print Spooler (disable if not printing)"
     "BthAvctpSvc"            = "Bluetooth Audio Gateway"
     "BTAGService"            = "Bluetooth Audio Gateway AVRCP"
 }
 
+# ---------- Windows 10 only ----------
 $svcsWin10Only = [ordered]@{
     "AJRouter"               = "AllJoyn Router (IoT protocol)"
     "CscService"             = "Offline Files"
@@ -209,6 +211,7 @@ $svcsWin10Only = [ordered]@{
     "CDPSvc"                 = "Connected Devices Platform (Win10)"
 }
 
+# ---------- Windows 11 only ----------
 $svcsWin11Only = [ordered]@{
     "cbdhsvc"                = "Clipboard User Service"
     "WpnService"             = "Windows Push Notifications System"
@@ -224,11 +227,11 @@ $svcsWin11Only = [ordered]@{
 
 # ---------- DELL ----------
 $svcsDELL = [ordered]@{
-    "DellClientManagementService"            = "Dell Client Management"
+    "DellClientManagementService"            = "Dell Client Management Service"
     "DellUpdate"                             = "Dell Update"
     "DellSupportAssistRemedationService"     = "Dell SupportAssist Remediation"
     "DellFoundationServices"                 = "Dell Foundation Services"
-    "DellTechHubService"                     = "Dell TechHub"
+    "DellTechHubService"                     = "Dell TechHub Service"
     "DellOptimizer"                          = "Dell Optimizer"
     "DellMobileConnect"                      = "Dell Mobile Connect"
     "DellDataVault"                          = "Dell Data Vault (telemetry)"
@@ -236,45 +239,45 @@ $svcsDELL = [ordered]@{
     "ThermalService"                         = "Dell Thermal Service"
     "DellDigitalDelivery"                    = "Dell Digital Delivery"
     "DellServiceConnectivity"                = "Dell Service Connectivity"
-    "DellInc.SupportAssistBusinessPCAgent"   = "Dell SupportAssist Business Agent"
+    "DellInc.SupportAssistBusinessPCAgent"   = "Dell SupportAssist Business PC Agent"
 }
 
 # ---------- HP ----------
 $svcsHP = [ordered]@{
-    "HPAppHelperCap"             = "HP App Helper Capture"
-    "HPDiagsMsgSvc"              = "HP Diagnostics Messages"
-    "HPNetworkCap"               = "HP Network Capture (telemetry)"
-    "HPSysInfoCap"               = "HP SysInfo Capture (telemetry)"
-    "hpsvc"                      = "HP Service"
+    "HPAppHelperCap"               = "HP App Helper Capture"
+    "HPDiagsMsgSvc"                = "HP Diagnostics Messages"
+    "HPNetworkCap"                 = "HP Network Capture (telemetry)"
+    "HPSysInfoCap"                 = "HP SysInfo Capture (telemetry)"
+    "hpsvc"                        = "HP Service"
     "HpTouchpointAnalyticsService" = "HP Touchpoint Analytics (telemetry)"
-    "HP Comm Recover"            = "HP Comm Recover"
-    "HPPrintScanDoctorService"   = "HP Print Scan Doctor"
-    "HPAudioSwitch"              = "HP Audio Switch"
-    "hp3ddrivelock"              = "HP 3D DriveGuard"
-    "HotKeyServiceDLL"           = "HP HotKey Service"
-    "HPWMISVC"                   = "HP WMI Service"
-    "HPJumpStartBridge"          = "HP JumpStart Bridge"
-    "HPJumpStartSvc"             = "HP JumpStart Service"
-    "hpCMSgt"                    = "HP Connection Manager"
-    "HPSmartAdapter"             = "HP Smart Adapter"
-    "HPUpdateService"            = "HP Update Service"
-    "HPDrvSvc"                   = "HP Driver Service"
-    "HPAM"                       = "HP Account Manager"
+    "HP Comm Recover"              = "HP Comm Recover"
+    "HPPrintScanDoctorService"     = "HP Print Scan Doctor"
+    "HPAudioSwitch"                = "HP Audio Switch"
+    "hp3ddrivelock"                = "HP 3D DriveGuard"
+    "HotKeyServiceDLL"             = "HP HotKey Service"
+    "HPWMISVC"                     = "HP WMI Service"
+    "HPJumpStartBridge"            = "HP JumpStart Bridge"
+    "HPJumpStartSvc"               = "HP JumpStart Service"
+    "hpCMSgt"                      = "HP Connection Manager"
+    "HPSmartAdapter"               = "HP Smart Adapter"
+    "HPUpdateService"              = "HP Update Service"
+    "HPDrvSvc"                     = "HP Driver Service"
+    "HPAM"                         = "HP Account Manager"
 }
 
 # ---------- LENOVO ----------
 $svcsLENOVO = [ordered]@{
     "ImControllerService"        = "Lenovo IdeaPad Controller"
-    "LenovoFnAndFunctionKeys"    = "Lenovo Fn Keys"
+    "LenovoFnAndFunctionKeys"    = "Lenovo Fn Function Keys"
     "Lenovo.Modern.ImController" = "Lenovo Modern ImController"
     "LenovoVantageService"       = "Lenovo Vantage Service"
-    "LenovoSystemUpdateAddin"    = "Lenovo System Update Addin"
+    "LenovoSystemUpdateAddin"    = "Lenovo System Update Add-in"
     "SUService"                  = "Lenovo System Update"
-    "ThinkPad HDD APS"           = "ThinkPad HDD Active Protection"
+    "ThinkPad HDD APS"           = "ThinkPad HDD Active Protection System"
     "LENOVO.CAMMUTE"             = "Lenovo Camera Mute"
-    "LENOVO.MICMUTE"             = "Lenovo Mic Mute"
+    "LENOVO.MICMUTE"             = "Lenovo Microphone Mute"
     "PMSvc"                      = "Lenovo Power Manager"
-    "bcom"                       = "Lenovo BCOM module"
+    "bcom"                       = "Lenovo BCOM Module"
     "LenovoSmartStandbyService"  = "Lenovo Smart Standby"
     "LenovoUtilityService"       = "Lenovo Utility Service"
     "LenovoMigrationService"     = "Lenovo Migration Service"
@@ -284,17 +287,17 @@ $svcsLENOVO = [ordered]@{
 # ---------- ASUS ----------
 $svcsASUS = [ordered]@{
     "asHmComSvc"                 = "ASUS HM Com Service"
-    "AsSysCtrlService"           = "ASUS System Control"
+    "AsSysCtrlService"           = "ASUS System Control Service"
     "AsusCertService"            = "ASUS Certificate Service"
     "ASUSUpdate"                 = "ASUS Update"
     "AsusUpdateCheck"            = "ASUS Update Check"
     "ASUSLinkNear"               = "ASUS Link Near (Armoury Crate)"
     "ASUSLinkRemote"             = "ASUS Link Remote (Armoury Crate)"
-    "ASUSOptimization"           = "ASUS Optimization"
+    "ASUSOptimization"           = "ASUS Optimization Service"
     "ASUSSystemAnalysis"         = "ASUS System Analysis"
     "ASUSSystemDiagnosis"        = "ASUS System Diagnosis"
     "ROGLiveService"             = "ROG Live Service"
-    "ArmouryCrateService"        = "Armoury Crate"
+    "ArmouryCrateService"        = "Armoury Crate Service"
     "GamingCenterService"        = "ASUS Gaming Center"
     "ASUSGiftBoxService"         = "ASUS Gift Box"
     "ASUSGiftBoxDesktopService"  = "ASUS Gift Box Desktop"
@@ -305,38 +308,38 @@ $svcsASUS = [ordered]@{
 # ---------- MSI ----------
 $svcsMSI = [ordered]@{
     "MSI_SuperCharger"       = "MSI SuperCharger"
-    "MSIAfterburnerCore"     = "MSI Afterburner (neu khong ep xung GPU)"
+    "MSIAfterburnerCore"     = "MSI Afterburner (disable if not overclocking GPU)"
     "SCM"                    = "MSI System Control Manager"
     "msidrvsvc"              = "MSI Driver Service"
-    "MSICenterService"       = "MSI Center"
+    "MSICenterService"       = "MSI Center Service"
     "MSIKeyboard"            = "MSI Keyboard Service"
     "MSIGamingCenterService" = "MSI Gaming Center"
     "DragonCenterService"    = "MSI Dragon Center"
-    "NahimicService"         = "Nahimic Audio (MSI)"
+    "NahimicService"         = "Nahimic Audio Service (MSI)"
     "MSIRGBService"          = "MSI RGB Service"
 }
 
 # ---------- ACER ----------
 $svcsACER = [ordered]@{
-    "AcerService"                = "Acer Service"
-    "AcerCloudService"           = "Acer Cloud"
-    "AcerPortalService"          = "Acer Portal"
-    "eDataSecurityManagement"    = "Acer eDataSecurity"
-    "AcerLaunchManager"          = "Acer Launch Manager"
-    "AcerOptimizer"              = "Acer Optimizer"
-    "PredatorSenseService"       = "Acer PredatorSense"
-    "NitroSenseService"          = "Acer NitroSense"
-    "QuickAccessService"         = "Acer Quick Access"
-    "AcerUpdateService"          = "Acer Update Service"
-    "AcerCare"                   = "Acer Care Center"
-    "ConceptDSenseService"       = "Acer ConceptD Sense"
+    "AcerService"             = "Acer Service"
+    "AcerCloudService"        = "Acer Cloud Service"
+    "AcerPortalService"       = "Acer Portal Service"
+    "eDataSecurityManagement" = "Acer eDataSecurity Management"
+    "AcerLaunchManager"       = "Acer Launch Manager"
+    "AcerOptimizer"           = "Acer Optimizer"
+    "PredatorSenseService"    = "Acer PredatorSense"
+    "NitroSenseService"       = "Acer NitroSense"
+    "QuickAccessService"      = "Acer Quick Access"
+    "AcerUpdateService"       = "Acer Update Service"
+    "AcerCare"                = "Acer Care Center"
+    "ConceptDSenseService"    = "Acer ConceptD Sense"
 }
 
 # ---------- SAMSUNG ----------
 $svcsSAMSUNG = [ordered]@{
     "SamsungMagicianService"  = "Samsung Magician"
-    "SamsungDeXSvc"           = "Samsung DeX"
-    "SamsungUpdateService"    = "Samsung Update"
+    "SamsungDeXSvc"           = "Samsung DeX Service"
+    "SamsungUpdateService"    = "Samsung Update Service"
     "SamsungSystemManager"    = "Samsung System Manager"
     "SamsungPC_Share_Manager" = "Samsung PC Share Manager"
     "SAService"               = "Samsung Activation Service"
@@ -345,8 +348,8 @@ $svcsSAMSUNG = [ordered]@{
 
 # ---------- SURFACE ----------
 $svcsSURFACE = [ordered]@{
-    "SurfaceService"                     = "Surface Service"
-    "SurfaceTelemetryService"            = "Surface Telemetry"
+    "SurfaceService"                     = "Microsoft Surface Service"
+    "SurfaceTelemetryService"            = "Surface Telemetry Service"
     "SurfaceDiagnostics"                 = "Surface Diagnostics"
     "SurfaceButton"                      = "Surface Button Service"
     "SurfacePen"                         = "Surface Pen Service"
@@ -357,9 +360,9 @@ $svcsSURFACE = [ordered]@{
 $svcsRAZER = [ordered]@{
     "Razer Chroma SDK Server"  = "Razer Chroma SDK Server"
     "Razer Chroma SDK Service" = "Razer Chroma SDK Service"
-    "RazerCentralService"      = "Razer Central"
+    "RazerCentralService"      = "Razer Central Service"
     "RazerIngameEngine"        = "Razer InGame Engine"
-    "Razer Synapse Service"    = "Razer Synapse"
+    "Razer Synapse Service"    = "Razer Synapse Service"
     "RzActionSvc"              = "Razer Action Service"
     "RazerNamingService"       = "Razer Naming Service"
 }
@@ -367,7 +370,7 @@ $svcsRAZER = [ordered]@{
 # ---------- GIGABYTE ----------
 $svcsGIGABYTE = [ordered]@{
     "GiGEAudServ"           = "Gigabyte Audio Service"
-    "GbActuatorService"     = "Gigabyte Actuator"
+    "GbActuatorService"     = "Gigabyte Actuator Service"
     "AppCenter"             = "Gigabyte App Center"
     "EasyTuneEngineService" = "Gigabyte Easy Tune"
     "RGBFusionSvc"          = "Gigabyte RGB Fusion"
@@ -377,8 +380,8 @@ $svcsGIGABYTE = [ordered]@{
 
 # ---------- TOSHIBA ----------
 $svcsTOSHIBA = [ordered]@{
-    "TODDSrv"                     = "Toshiba ODD Device"
-    "TMachInfo"                   = "Toshiba Machine Info"
+    "TODDSrv"                     = "Toshiba ODD Device Service"
+    "TMachInfo"                   = "Toshiba Machine Information"
     "TOSHIBA eco Utility Service" = "Toshiba Eco Utility"
     "TVALZ"                       = "Toshiba ACPI Driver"
     "TPCH"                        = "Toshiba PCH Service"
@@ -387,10 +390,10 @@ $svcsTOSHIBA = [ordered]@{
 
 # ---------- HUAWEI ----------
 $svcsHUAWEI = [ordered]@{
-    "HuaweiPCManagerSvc"       = "Huawei PCManager"
-    "HuaweiService"            = "Huawei Service"
-    "HiService"                = "Huawei HiSuite"
-    "HuaweiEasyProjectionSvc"  = "Huawei EasyProjection"
+    "HuaweiPCManagerSvc"      = "Huawei PCManager Service"
+    "HuaweiService"           = "Huawei Service"
+    "HiService"               = "Huawei HiSuite Service"
+    "HuaweiEasyProjectionSvc" = "Huawei EasyProjection"
 }
 
 # ---------- LG ----------
@@ -408,21 +411,21 @@ $svcsPANA = [ordered]@{
 
 # ---------- FUJITSU ----------
 $svcsFUJITSU = [ordered]@{
-    "FjSessServiceAgent" = "Fujitsu Session Agent"
+    "FjSessServiceAgent" = "Fujitsu Session Service Agent"
     "FjDspService"       = "Fujitsu DSP Service"
     "FUJBtnSvc"          = "Fujitsu Button Service"
 }
 
 # ---------- VAIO ----------
 $svcsVAIO = [ordered]@{
-    "VAIOCareService"    = "VAIO Care Service"
-    "VAIOAudioControl"   = "VAIO Audio Control"
-    "VAIOEventService"   = "VAIO Event Service"
-    "VaioSettingsService"= "VAIO Settings Service"
+    "VAIOCareService"     = "VAIO Care Service"
+    "VAIOAudioControl"    = "VAIO Audio Control"
+    "VAIOEventService"    = "VAIO Event Service"
+    "VaioSettingsService" = "VAIO Settings Service"
 }
 
 # ==========================================================================
-# HAM TIEN ICH -- Stop & Disable
+# UTILITY FUNCTION -- Stop & Disable
 # ==========================================================================
 function Stop-And-Disable {
     param(
@@ -533,36 +536,36 @@ function Invoke-MemoryCommand {
 }
 
 # ==========================================================================
-# BUOC 1 -- XA STANDBY LIST + KERNEL CACHE
+# STEP 1 -- FLUSH STANDBY LIST + KERNEL CACHE
 # ==========================================================================
-Show-Section "BUOC 1: Xa Standby List + Kernel Cache"
+Show-Section "STEP 1: Flush Standby List + Kernel Cache"
 
 [TokenPriv3]::Enable("SeIncreaseQuotaPrivilege")        | Out-Null
 [TokenPriv3]::Enable("SeProfileSingleProcessPrivilege") | Out-Null
 
 Invoke-MemoryCommand -cmd 4 -label "Flush Modified List (dirty pages -> standby)"
 Start-Sleep -Milliseconds 300
-Invoke-MemoryCommand -cmd 3 -label "Purge Standby List (giai phong cache kernel)"
+Invoke-MemoryCommand -cmd 3 -label "Purge Standby List (free kernel cache)"
 Start-Sleep -Milliseconds 300
-Invoke-MemoryCommand -cmd 1 -label "Empty All Working Sets"
+Invoke-MemoryCommand -cmd 1 -label "Empty All Process Working Sets"
 
 # ==========================================================================
-# BUOC 2 -- XA FILE SYSTEM CACHE
+# STEP 2 -- FLUSH FILE SYSTEM CACHE
 # ==========================================================================
-Show-Section "BUOC 2: Xa File System Cache"
+Show-Section "STEP 2: Flush File System Cache"
 
 $minB = [IntPtr]::Zero; $maxB = [IntPtr]::Zero; $flg = 0
 [SysCache3]::GetSystemFileCacheSize([ref]$minB, [ref]$maxB, [ref]$flg) | Out-Null
-Write-Log ("  Cache hien tai:  min={0} MB   max={1} MB" -f ([long]$minB/1MB), ([long]$maxB/1MB)) "White"
+Write-Log ("  Current cache:  min={0} MB   max={1} MB" -f ([long]$minB/1MB), ([long]$maxB/1MB)) "White"
 
 $r2 = [SysCache3]::SetSystemFileCacheSize([IntPtr](-1), [IntPtr](-1), 0)
-if ($r2) { Write-Log "  [OK] File system cache da xa" "Green" }
-else     { Write-Log "  [WARN] Khong xa duoc (co the can them quyen SE_INCREASE_QUOTA)" "Yellow" }
+if ($r2) { Write-Log "  [OK] File system cache flushed" "Green" }
+else     { Write-Log "  [WARN] Could not flush cache (may need SE_INCREASE_QUOTA privilege)" "Yellow" }
 
 # ==========================================================================
-# BUOC 3 -- TRIM WORKING SET TOAN BO TIEN TRINH
+# STEP 3 -- TRIM WORKING SET OF ALL PROCESSES
 # ==========================================================================
-Show-Section "BUOC 3: Trim Working Set toan bo tien trinh"
+Show-Section "STEP 3: Trim Working Set of all processes"
 
 $skipList = @("System","Idle","smss","csrss","wininit","winlogon","lsass",
               "services","Registry","Memory Compression","MsMpEng","audiodg",
@@ -585,35 +588,35 @@ Get-Process -ErrorAction SilentlyContinue |
         } else { $trimFail++ }
     } catch { $trimFail++ }
 }
-Write-Log ("  [OK] Trim xong  : {0} tien trinh" -f $trimOK)  "Green"
-Write-Log ("  [OK] Giai phong : ~{0} MB" -f [math]::Round($freedBytes/1MB,1)) "Green"
-Write-Log ("  [--] Bo qua     : {0} tien trinh he thong" -f $trimFail) "DarkGray"
+Write-Log ("  [OK] Trimmed    : {0} processes" -f $trimOK)  "Green"
+Write-Log ("  [OK] Freed      : ~{0} MB" -f [math]::Round($freedBytes/1MB,1)) "Green"
+Write-Log ("  [--] Skipped    : {0} protected system processes" -f $trimFail) "DarkGray"
 
 # ==========================================================================
-# BUOC 4 -- TAT DICH VU HE THONG CHUNG
+# STEP 4 -- DISABLE UNNECESSARY WINDOWS SERVICES
 # ==========================================================================
-Show-Section "BUOC 4: Tat dich vu Windows khong can thiet"
+Show-Section "STEP 4: Disable unnecessary Windows services"
 
-Write-Log "  >> Dich vu chung (Win10 + Win11)..." "White"
+Write-Log "  >> Common services (Win10 + Win11)..." "White"
 $n4 = Stop-And-Disable -ServiceMap $svcsCommon -Category "Common"
-Write-Log ("  >> Common: {0} dich vu xu ly" -f $n4) "Green"
+Write-Log ("  >> Common: {0} services processed" -f $n4) "Green"
 
 if ($isWin10) {
-    Write-Log "  >> Dich vu Win10-only..." "DarkGray"
+    Write-Log "  >> Win10-only services..." "DarkGray"
     $n4b = Stop-And-Disable -ServiceMap $svcsWin10Only -Category "Win10Only"
-    Write-Log ("  >> Win10 specific: {0} dich vu" -f $n4b) "Green"
+    Write-Log ("  >> Win10-specific: {0} services" -f $n4b) "Green"
 }
 if ($isWin11) {
-    Write-Log "  >> Dich vu Win11-only..." "DarkGray"
+    Write-Log "  >> Win11-only services..." "DarkGray"
     $n4c = Stop-And-Disable -ServiceMap $svcsWin11Only -Category "Win11Only"
-    Write-Log ("  >> Win11 specific: {0} dich vu" -f $n4c) "Green"
+    Write-Log ("  >> Win11-specific: {0} services" -f $n4c) "Green"
 }
 
 # ==========================================================================
-# BUOC 5 -- TAT DICH VU THEO HANG MAY
+# STEP 5 -- DISABLE VENDOR SERVICES
 # ==========================================================================
-Show-Section ("BUOC 5: Tat dich vu hang may [ {0} ]" -f $brand)
-Write-Log ("  >> Hang: {0}  |  Nguon: {1}" -f $brand, $brandSrc) $brandColor
+Show-Section ("STEP 5: Disable vendor services [ {0} ]" -f $brand)
+Write-Log ("  >> Brand: {0}  |  Detection source: {1}" -f $brand, $brandSrc) $brandColor
 Write-Log ""
 
 $n5 = 0
@@ -635,22 +638,22 @@ switch ($brand) {
     "FUJITSU"            { $n5 = Stop-And-Disable -ServiceMap $svcsFUJITSU  -Category "FUJITSU"  }
     "VAIO"               { $n5 = Stop-And-Disable -ServiceMap $svcsVAIO     -Category "VAIO"     }
     "GENERIC_AMI"        {
-        Write-Log "  [i] BIOS AMI -- thu Gigabyte + ASUS..." "Yellow"
+        Write-Log "  [i] AMI BIOS detected -- trying Gigabyte + ASUS service lists..." "Yellow"
         $n5a = Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE/AMI"
         $n5b = Stop-And-Disable -ServiceMap $svcsASUS     -Category "ASUS/AMI"
         $n5  = $n5a + $n5b
     }
     default {
-        Write-Log "  [i] Hang chua nhan dien -- bo qua dich vu hang." "Yellow"
+        Write-Log "  [i] Brand not identified -- skipping vendor services." "Yellow"
     }
 }
 Write-Log ""
-Write-Log ("  >> Tong dich vu hang [{0}] xu ly: {1}" -f $brand, $n5) $brandColor
+Write-Log ("  >> Total vendor [{0}] services processed: {1}" -f $brand, $n5) $brandColor
 
 # ==========================================================================
-# BUOC 6 -- SCAN KEYWORD: Tim dich vu hang con sot
+# STEP 6 -- KEYWORD SCAN: Catch remaining vendor services
 # ==========================================================================
-Show-Section "BUOC 6: Scan keyword -- tim dich vu hang con sot"
+Show-Section "STEP 6: Keyword scan -- catch remaining vendor services"
 
 $vendorKW = @(
     "dell","hewlett","hp ","hpinc","lenovo","thinkpad","ideapad","legion",
@@ -677,7 +680,7 @@ foreach ($svc in $allSvcs) {
 }
 
 if ($extraFound.Count -gt 0) {
-    Write-Log ("  [!] Phat hien them {0} dich vu hang:" -f $extraFound.Count) "Yellow"
+    Write-Log ("  [!] Found {0} additional vendor services:" -f $extraFound.Count) "Yellow"
     foreach ($sv in $extraFound) {
         Write-Log ("      {0,-40} [{1}]  {2}" -f $sv.Name, $sv.Status, $sv.DisplayName) "Yellow"
         try {
@@ -689,13 +692,13 @@ if ($extraFound.Count -gt 0) {
         } catch {}
     }
 } else {
-    Write-Log "  [OK] Khong phat hien them dich vu hang nao." "Green"
+    Write-Log "  [OK] No additional vendor services found." "Green"
 }
 
 # ==========================================================================
-# BUOC 7 -- TAT STARTUP ITEMS HANG (Registry + Task Scheduler)
+# STEP 7 -- DISABLE VENDOR STARTUP ITEMS (Registry + Task Scheduler)
 # ==========================================================================
-Show-Section "BUOC 7: Tat Startup items hang (Registry + Task Scheduler)"
+Show-Section "STEP 7: Disable vendor Startup items (Registry + Task Scheduler)"
 
 $startupKeys = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -731,7 +734,7 @@ foreach ($regPath in $startupKeys) {
     }
 }
 
-# Task Scheduler: vo hieu hoa task cua hang
+# Task Scheduler: disable vendor scheduled tasks
 $taskVendorKW = @(
     "dell","hp","lenovo","asus","msi","acer","samsung","toshiba",
     "huawei","razer","gigabyte","supportassist","vantage","armoury",
@@ -767,15 +770,15 @@ try {
     [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sched) | Out-Null
 } catch {}
 
-Write-Log ("  [OK] Startup registry entries da xoa : {0}" -f $startupRemoved) "Green"
-Write-Log ("  [OK] Scheduled tasks hang da tat     : {0}" -f $Script:taskDisabled) "Green"
+Write-Log ("  [OK] Startup registry entries removed : {0}" -f $startupRemoved) "Green"
+Write-Log ("  [OK] Vendor scheduled tasks disabled  : {0}" -f $Script:taskDisabled) "Green"
 
 # ==========================================================================
-# BUOC 8 -- REGISTRY TUNG HOP
+# STEP 8 -- REGISTRY TWEAKS
 # ==========================================================================
-Show-Section "BUOC 8: Toi uu Registry (Memory / Telemetry / Visual / TCP / Game)"
+Show-Section "STEP 8: Registry tweaks (Memory / Telemetry / Visual FX / TCP / Game)"
 
-# Memory Management
+# --- Memory Management ---
 $mm   = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
 $pref = "$mm\PrefetchParameters"
 
@@ -796,9 +799,9 @@ if (Test-Path $pref) {
     Set-ItemProperty -Path $pref -Name "EnableSuperfetch"  -Value 0 -Type DWord -ErrorAction SilentlyContinue
     Set-ItemProperty -Path $pref -Name "EnableBoottrace"   -Value 0 -Type DWord -ErrorAction SilentlyContinue
 }
-Write-Log "  [OK] Memory Management registry" "Green"
+Write-Log "  [OK] Memory Management registry optimized" "Green"
 
-# Telemetry
+# --- Telemetry ---
 $telData = @{
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"                = @{ "AllowTelemetry" = 0 }
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" = @{ "AllowTelemetry" = 0; "MaxTelemetryAllowed" = 0 }
@@ -812,66 +815,66 @@ foreach ($path in $telData.Keys) {
         Set-ItemProperty -Path $path -Name $name -Value $telData[$path][$name] -Type DWord -ErrorAction SilentlyContinue
     }
 }
-# Block CompatTelRunner
+# Block CompatTelRunner via IFEO
 $ctrKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\CompatTelRunner.exe"
 if (-not (Test-Path $ctrKey)) { New-Item -Path $ctrKey -Force -ErrorAction SilentlyContinue | Out-Null }
 Set-ItemProperty -Path $ctrKey -Name "Debugger" -Value "%windir%\System32\taskkill.exe" -Type String -ErrorAction SilentlyContinue
-Write-Log "  [OK] Telemetry + CEIP + CompatTelRunner da tat" "Green"
+Write-Log "  [OK] Telemetry + CEIP + CompatTelRunner disabled" "Green"
 
-# Visual FX -- Best Performance
+# --- Visual FX: Best Performance ---
 $visPref = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
 if (-not (Test-Path $visPref)) { New-Item -Path $visPref -Force -ErrorAction SilentlyContinue | Out-Null }
 Set-ItemProperty -Path $visPref -Name "VisualFXSetting" -Value 2 -Type DWord -ErrorAction SilentlyContinue
-Write-Log "  [OK] Visual Effects -> Best Performance" "Green"
+Write-Log "  [OK] Visual Effects set to Best Performance" "Green"
 
-# TCP toi uu
+# --- TCP tweaks ---
 $tcpPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters"
 Set-ItemProperty -Path $tcpPath -Name "TcpAckFrequency" -Value 1  -Type DWord -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $tcpPath -Name "TCPNoDelay"      -Value 1  -Type DWord -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $tcpPath -Name "DefaultTTL"      -Value 64 -Type DWord -ErrorAction SilentlyContinue
-Write-Log "  [OK] TCP parameters toi uu" "Green"
+Write-Log "  [OK] TCP parameters optimized" "Green"
 
-# Power: High Performance
+# --- Power Plan: High Performance ---
 try {
     powercfg /setactive SCHEME_MIN 2>&1 | Out-Null
-    Write-Log "  [OK] Power Plan -> High Performance" "Green"
+    Write-Log "  [OK] Power Plan set to High Performance" "Green"
 } catch {}
 
-# GameDVR / GameBar tat
+# --- Disable GameDVR / GameBar ---
 $gdvrPath = "HKCU:\System\GameConfigStore"
 if (-not (Test-Path $gdvrPath)) { New-Item -Path $gdvrPath -Force -ErrorAction SilentlyContinue | Out-Null }
 Set-ItemProperty -Path $gdvrPath -Name "GameDVR_Enabled" -Value 0 -Type DWord -ErrorAction SilentlyContinue
 $gbarPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR"
 if (-not (Test-Path $gbarPath)) { New-Item -Path $gbarPath -Force -ErrorAction SilentlyContinue | Out-Null }
 Set-ItemProperty -Path $gbarPath -Name "AppCaptureEnabled" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-Write-Log "  [OK] GameDVR / GameBar tat" "Green"
+Write-Log "  [OK] GameDVR / GameBar disabled" "Green"
 
-# Cortana tat
+# --- Disable Cortana ---
 $cortanaPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
 if (-not (Test-Path $cortanaPath)) { New-Item -Path $cortanaPath -Force -ErrorAction SilentlyContinue | Out-Null }
 Set-ItemProperty -Path $cortanaPath -Name "AllowCortana" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-Write-Log "  [OK] Cortana tat qua policy" "Green"
+Write-Log "  [OK] Cortana disabled via policy" "Green"
 
-# Win11: Widgets
+# Win11: Widgets panel
 if ($isWin11) {
     $widgetPath = "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
     if (-not (Test-Path $widgetPath)) { New-Item -Path $widgetPath -Force -ErrorAction SilentlyContinue | Out-Null }
     Set-ItemProperty -Path $widgetPath -Name "AllowNewsAndInterests" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Win11 Widgets panel tat" "Green"
+    Write-Log "  [OK] Win11 Widgets panel disabled" "Green"
 }
 
-# Win10: News & Interests
+# Win10: News & Interests taskbar
 if ($isWin10) {
     $niPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds"
     if (-not (Test-Path $niPath)) { New-Item -Path $niPath -Force -ErrorAction SilentlyContinue | Out-Null }
     Set-ItemProperty -Path $niPath -Name "EnableFeeds" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Win10 News & Interests taskbar tat" "Green"
+    Write-Log "  [OK] Win10 News & Interests taskbar disabled" "Green"
 }
 
 # ==========================================================================
-# BUOC 9 -- DON FILE RAC NAM CAP
+# STEP 9 -- DEEP JUNK CLEANUP
 # ==========================================================================
-Show-Section "BUOC 9: Don file rac he thong (nam cap)"
+Show-Section "STEP 9: Deep junk file cleanup (5 layers)"
 
 $cleanDirs = @(
     $env:TEMP,
@@ -890,11 +893,11 @@ foreach ($d in $cleanDirs) {
         $cnt = (Get-ChildItem -Path $d -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
         Get-ChildItem -Path $d -ErrorAction SilentlyContinue |
             Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-        Write-Log ("  [OK] Don: {0,-55} ({1} items)" -f $d, $cnt) "Green"
+        Write-Log ("  [OK] Cleaned: {0,-55} ({1} items)" -f $d, $cnt) "Green"
     }
 }
 
-# Windows Update cache
+# Windows Update download cache
 $wu = "C:\Windows\SoftwareDistribution\Download"
 if (Test-Path $wu) {
     $wus = Get-Service "wuauserv" -ErrorAction SilentlyContinue
@@ -906,7 +909,7 @@ if (Test-Path $wu) {
     Get-ChildItem $wu -ErrorAction SilentlyContinue |
         Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
     Start-Service "wuauserv" -ErrorAction SilentlyContinue
-    Write-Log ("  [OK] Windows Update cache: {0} items" -f $wuCnt) "Green"
+    Write-Log ("  [OK] Windows Update download cache: {0} items removed" -f $wuCnt) "Green"
 }
 
 # Thumbnail cache
@@ -914,12 +917,12 @@ $thumbDir = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
 if (Test-Path $thumbDir) {
     Get-ChildItem -Path $thumbDir -Filter "thumbcache_*.db" -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Thumbnail cache (thumbcache_*.db) xoa" "Green"
+    Write-Log "  [OK] Thumbnail cache (thumbcache_*.db) removed" "Green"
 }
 
-# DNS
+# DNS cache
 ipconfig /flushdns 2>&1 | Out-Null
-Write-Log "  [OK] DNS Cache flush" "Green"
+Write-Log "  [OK] DNS cache flushed" "Green"
 
 # Event Logs
 foreach ($log in @("Application","System","Setup")) {
@@ -931,64 +934,64 @@ foreach ($log in @("Application","System","Setup")) {
 }
 
 # ==========================================================================
-# BUOC 10 -- TOI UU DANG THEO PHIEN BAN WINDOWS
+# STEP 10 -- VERSION-SPECIFIC TWEAKS
 # ==========================================================================
-Show-Section ("BUOC 10: Toi uu dac thu [{0}]" -f $winTag)
+Show-Section ("STEP 10: Version-specific tweaks [{0}]" -f $winTag)
 
 if ($isWin11) {
-    # Taskbar Chat (Teams consumer)
+    # Taskbar Chat button (Teams consumer)
     $chatKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
     Set-ItemProperty -Path $chatKey -Name "TaskbarMn" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Taskbar Chat icon an" "Green"
+    Write-Log "  [OK] Taskbar Chat icon hidden" "Green"
 
     # Snap Assist Flyout
     Set-ItemProperty -Path $chatKey -Name "EnableSnapAssistFlyout" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Snap Assist Flyout tat" "Green"
+    Write-Log "  [OK] Snap Assist Flyout disabled" "Green"
 
-    # Voice / Online Speech
+    # Online Speech / Voice Access
     $vaSpeech = "HKCU:\Software\Microsoft\Speech_OneCore\Settings\OnlineServices"
     if (Test-Path $vaSpeech) {
         Set-ItemProperty -Path $vaSpeech -Name "OnlineSpeechPrivacy" -Value 0 -Type DWord -ErrorAction SilentlyContinue
     }
-    Write-Log "  [OK] Online Speech Privacy tat" "Green"
+    Write-Log "  [OK] Online Speech Privacy disabled" "Green"
 
-    # WSA (Windows Subsystem for Android)
+    # Windows Subsystem for Android
     $wsaSvc = Get-Service -Name "WsaService" -ErrorAction SilentlyContinue
     if ($wsaSvc) {
         Stop-Service "WsaService" -Force -ErrorAction SilentlyContinue
         Set-Service  "WsaService" -StartupType Disabled -ErrorAction SilentlyContinue
-        Write-Log "  [OK] Windows Subsystem for Android (WSA) tat" "Green"
+        Write-Log "  [OK] Windows Subsystem for Android (WSA) disabled" "Green"
     } else {
-        Write-Log "  [--] WSA khong cai -- bo qua" "DarkGray"
+        Write-Log "  [--] WSA not installed -- skipping" "DarkGray"
     }
 
-    # Copilot
+    # Copilot button on taskbar
     $cpPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
     Set-ItemProperty -Path $cpPath -Name "ShowCopilotButton" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Copilot button an tren taskbar" "Green"
+    Write-Log "  [OK] Copilot button hidden from taskbar" "Green"
 }
 
 if ($isWin10) {
-    # Timeline
+    # Timeline / Activity Feed
     $tlPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
     if (-not (Test-Path $tlPath)) { New-Item -Path $tlPath -Force -ErrorAction SilentlyContinue | Out-Null }
     Set-ItemProperty -Path $tlPath -Name "EnableActivityFeed"    -Value 0 -Type DWord -ErrorAction SilentlyContinue
     Set-ItemProperty -Path $tlPath -Name "PublishUserActivities" -Value 0 -Type DWord -ErrorAction SilentlyContinue
     Set-ItemProperty -Path $tlPath -Name "UploadUserActivities"  -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Windows Timeline tat" "Green"
+    Write-Log "  [OK] Windows Timeline / Activity Feed disabled" "Green"
 
-    # Fast Startup (neu o SSD thi co the giu, o HDD tat de tranh loi RAM)
+    # Fast Startup / Hiberboot (can cause RAM issues on HDD)
     $hiberPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"
     Set-ItemProperty -Path $hiberPath -Name "HiberbootEnabled" -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] Fast Startup (Hiberboot) tat -- on dinh hon tren HDD" "Green"
+    Write-Log "  [OK] Fast Startup (Hiberboot) disabled -- more stable on HDD" "Green"
 }
 
 # ==========================================================================
-# TONG KET & XAC NHAN
+# SUMMARY
 # ==========================================================================
 Write-Log ""
 Write-Log "  +========================================================+" "Cyan"
-Write-Log "  |                     TONG KET                          |" "Cyan"
+Write-Log "  |                      SUMMARY                          |" "Cyan"
 Write-Log "  +========================================================+" "Cyan"
 
 $os1   = Get-CimInstance Win32_OperatingSystem
@@ -998,38 +1001,38 @@ $pct1  = [math]::Round(($used1 / $total) * 100, 1)
 $gain  = [math]::Round($free1 - $free0, 2)
 
 Write-Log ""
-Write-Log ("  OS       :  {0}  [Build {1}  |  {2}]" -f $winName, $winBuild, $winTag) "White"
-Write-Log ("  Hang may :  {0}" -f $brand) $brandColor
-Write-Log ("  Tong RAM :  {0} GB" -f $total) "White"
-Write-Log ("  Truoc    :  ranh {0} GB" -f $free0) "DarkGray"
-Write-Log ("  Sau      :  ranh {0} GB" -f $free1) "White"
+Write-Log ("  OS          :  {0}  [Build {1}  |  {2}]" -f $winName, $winBuild, $winTag) "White"
+Write-Log ("  Brand       :  {0}" -f $brand) $brandColor
+Write-Log ("  Total RAM   :  {0} GB" -f $total) "White"
+Write-Log ("  Before      :  {0} GB free" -f $free0) "DarkGray"
+Write-Log ("  After       :  {0} GB free" -f $free1) "White"
 
 if ($gain -gt 0) {
-    Write-Log ("  Giai phong : +{0} GB" -f $gain) "Green"
+    Write-Log ("  Freed       :  +{0} GB" -f $gain) "Green"
 } else {
-    Write-Log "  Thay doi   : Nho (kernel tu xa them sau vai giay)" "Yellow"
+    Write-Log "  Change      :  Minor (kernel will release more over the next few seconds)" "Yellow"
 }
 
 $ramCol = if ($pct1 -gt 80) {"Red"} elseif ($pct1 -gt 60) {"Yellow"} else {"Green"}
-Write-Log ("  Dang dung  : {0} GB  ({1}%)" -f $used1, $pct1) $ramCol
+Write-Log ("  In use      :  {0} GB  ({1}%)" -f $used1, $pct1) $ramCol
 
 Write-Log ""
 Write-Log "  --------------------------------------------------------" "DarkGray"
-Write-Log "  [!] RESTART may de toan bo thay doi co hieu luc." "Yellow"
-Write-Log "  [!] Dich vu hang da DISABLED -- khong tu chay lai khi boot." "Yellow"
-Write-Log "  [!] Neu mat chuc nang (Fn key, cam bien, bam phim dac biet)" "Yellow"
-Write-Log "      vao: Services.msc  bat lai dich vu can thiet." "Yellow"
+Write-Log "  [!] RESTART your PC for all changes to take full effect." "Yellow"
+Write-Log "  [!] Vendor services are DISABLED -- they will not auto-start on boot." "Yellow"
+Write-Log "  [!] If you lose hardware functionality (Fn keys, sensors, hotkeys)" "Yellow"
+Write-Log "      open Services.msc and re-enable the relevant service." "Yellow"
 Write-Log "  --------------------------------------------------------" "DarkGray"
 
-# Ghi log
+# Write log file
 try {
-    Add-Content -Path $Script:LogFile -Value ("Log tao luc: " + (Get-Date)) -Encoding UTF8
+    Add-Content -Path $Script:LogFile -Value ("Log created: " + (Get-Date)) -Encoding UTF8
     $Script:LogLines | Out-File -FilePath $Script:LogFile -Encoding UTF8 -ErrorAction Stop
     Write-Log ""
-    Write-Log ("  [LOG] Bao cao da luu tai:") "Cyan"
+    Write-Log "  [LOG] Report saved to:" "Cyan"
     Write-Log ("        {0}" -f $Script:LogFile) "Cyan"
 } catch {
-    Write-Log "  [LOG] Khong ghi duoc log (co the Desktop bi chan)." "DarkGray"
+    Write-Log "  [LOG] Could not write log file (Desktop may be restricted)." "DarkGray"
 }
 
 Write-Log ""
