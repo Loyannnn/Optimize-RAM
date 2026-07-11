@@ -23,7 +23,7 @@
 #   [NEW-3]  SessionViewSize = 256 MB for 8 GB profile (was 48 MB in v3 = kernel pressure)
 #   [NEW-4]  SwapFile.sys disabled on SSD via policy
 #   [NEW-5]  WSL2 auto-memory reclaim via .wslconfig (vmmem bloat fix)
-#   [NEW-6]  Windows Defender CPU throttle to 25% (no disable — safe)
+#   [NEW-6]  Windows Defender CPU throttle to 25% (no disable  --  safe)
 #   [NEW-7]  SearchIndexer killed at runtime (service already disabled)
 #   [NEW-8]  ClearPageFileAtShutdown enabled (stops stale PF pressure)
 #   [NEW-9]  Automated pagefile sizing for 8 GB (1 GB min / 4 GB max / fixed)
@@ -35,7 +35,7 @@
 # ==============================================================================
 
 #Requires -Version 5.1
-Set-StrictMode -Version Latest
+Set-StrictMode -Off   # [BUG-FIX V4-A] Latest làm lỗi non-terminating -> terminating, bypass SilentlyContinue
 $ErrorActionPreference = "SilentlyContinue"
 
 # ---- Admin guard ----
@@ -80,7 +80,7 @@ function Show-Progress {
 }
 
 # ==============================================================================
-# STEP 0 — SYSTEM DETECTION
+# STEP 0  --  SYSTEM DETECTION
 # ==============================================================================
 Clear-Host
 Write-Log ""
@@ -93,19 +93,22 @@ Write-Log ""
 
 Show-Progress "Querying system information..."
 
-$cs   = Get-CimInstance Win32_ComputerSystem
-$bios = Get-CimInstance Win32_BIOS
-$os0  = Get-CimInstance Win32_OperatingSystem
-$cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
-$disk = Get-CimInstance Win32_DiskDrive | Select-Object -First 1
+$cs = $null; $bios = $null; $os0 = $null; $cpu = $null; $disk = $null
+try { $cs   = Get-CimInstance Win32_ComputerSystem  -EA Stop } catch { $cs   = Get-WmiObject Win32_ComputerSystem  -EA SilentlyContinue }
+try { $bios = Get-CimInstance Win32_BIOS            -EA Stop } catch { $bios = Get-WmiObject Win32_BIOS            -EA SilentlyContinue }
+try { $os0  = Get-CimInstance Win32_OperatingSystem -EA Stop } catch { $os0  = Get-WmiObject Win32_OperatingSystem -EA SilentlyContinue }
+try { $cpu  = Get-CimInstance Win32_Processor       -EA Stop | Select-Object -First 1 } catch { $cpu  = Get-WmiObject Win32_Processor -EA SilentlyContinue | Select-Object -First 1 }
+try { $disk = Get-CimInstance Win32_DiskDrive       -EA Stop | Select-Object -First 1 } catch { $disk = Get-WmiObject Win32_DiskDrive -EA SilentlyContinue | Select-Object -First 1 }
+
+if (-not $os0) { Write-Host "[!] Cannot query OS info via WMI/CIM. Make sure WMI service is running." -ForegroundColor Red; Start-Sleep 5; exit 1 }
 
 $winBuild = [int]($os0.BuildNumber)
-$winName  = $os0.Caption
+$winName  = if ($os0.Caption) { $os0.Caption } else { "Windows" }
 $isWin11  = ($winBuild -ge 22000)
 $isWin10  = (-not $isWin11) -and ($winBuild -ge 17763)
 $winTag   = if ($isWin11) {"WIN11"} elseif ($isWin10) {"WIN10"} else {"WIN_OLD"}
 
-$ramGB = [math]::Round($cs.TotalPhysicalMemory / 1GB, 1)
+$ramGB = if ($cs)  { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } else { 4.0 }
 $is8GB = ($ramGB -ge 7.0 -and $ramGB -le 9.5)
 $free0 = [math]::Round($os0.FreePhysicalMemory    / 1MB, 2)
 $total = [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2)
@@ -119,8 +122,8 @@ try {
 $mediaType = if ($isSSD) { "SSD" } else { "HDD/Unknown" }
 
 # Brand detection
-$mfrRaw  = ($cs.Manufacturer + " " + $cs.Model).ToLower()
-$biosRaw = ($bios.Manufacturer + " " + ($bios.SMBIOSBIOSVersion -join " ")).ToLower()
+$mfrRaw  = if ($cs)   { ("$($cs.Manufacturer) $($cs.Model)").ToLower() } else { "" }
+$biosRaw = if ($bios) { ("$($bios.Manufacturer) $($bios.SMBIOSBIOSVersion -join ' ')").ToLower() } else { "" }
 $brand   = "UNKNOWN"; $brandSrc = "manufacturer"
 $brandMap = [ordered]@{
     "dell"="DELL"; "hp "="HP"; "hewlett"="HP"; "lenovo"="LENOVO"; "asus"="ASUS"
@@ -148,15 +151,15 @@ $brandColor = switch ($brand) {
 
 Write-Log ("  OS       :  {0}" -f $winName) "White"
 Write-Log ("  Build    :  {0}  [{1}]" -f $winBuild, $winTag) "White"
-Write-Log ("  Machine  :  {0}  |  {1}" -f $cs.Manufacturer, $cs.Model) "White"
-Write-Log ("  CPU      :  {0}" -f $cpu.Name) "White"
+Write-Log ("  Machine  :  {0}  |  {1}" -f $(if($cs){$cs.Manufacturer}else{"?"}), $(if($cs){$cs.Model}else{"?"})) "White"
+Write-Log ("  CPU      :  {0}" -f $(if($cpu){$cpu.Name}else{"?"})) "White"
 Write-Log ("  RAM      :  {0} GB  (Free now: {1} GB)" -f $ramGB, $free0) "White"
-Write-Log ("  Disk     :  {0}  [{1}]" -f $disk.Model, $mediaType) "White"
+Write-Log ("  Disk     :  {0}  [{1}]" -f $(if($disk){$disk.Model}else{"?"}), $mediaType) "White"
 Write-Log ("  Brand    :  [ {0} ]  (source: {1})" -f $brand, $brandSrc) $brandColor
 
-if ($is8GB)  { Write-Log "  [*] 8 GB RAM profile ACTIVE — targeted kernel sizing applied" "Magenta" }
-if ($isSSD)  { Write-Log "  [*] SSD detected — SwapFile.sys will be DISABLED, Prefetch OFF" "Magenta" }
-if ($winTag -eq "WIN_OLD") { Write-Log "  [!] Old build (<1809) — some features may not apply" "Yellow" }
+if ($is8GB)  { Write-Log "  [*] 8 GB RAM profile ACTIVE  --  targeted kernel sizing applied" "Magenta" }
+if ($isSSD)  { Write-Log "  [*] SSD detected  --  SwapFile.sys will be DISABLED, Prefetch OFF" "Magenta" }
+if ($winTag -eq "WIN_OLD") { Write-Log "  [!] Old build (<1809)  --  some features may not apply" "Yellow" }
 Write-Log ""
 
 # ==============================================================================
@@ -277,9 +280,9 @@ function Stop-And-Disable {
 }
 
 # ==============================================================================
-# STEP 1 — KERNEL MEMORY FLUSH
+# STEP 1  --  KERNEL MEMORY FLUSH
 # ==============================================================================
-Show-Section "STEP 1: Kernel Memory Flush — Standby / Modified / Working Sets"
+Show-Section "STEP 1: Kernel Memory Flush  --  Standby / Modified / Working Sets"
 
 [TokenPriv4]::Enable("SeIncreaseQuotaPrivilege")        | Out-Null
 [TokenPriv4]::Enable("SeProfileSingleProcessPrivilege") | Out-Null
@@ -299,7 +302,7 @@ if ($winBuild -ge 17763) {
 }
 
 # ==============================================================================
-# STEP 2 — FILE SYSTEM CACHE FLUSH
+# STEP 2  --  FILE SYSTEM CACHE FLUSH
 # ==============================================================================
 Show-Section "STEP 2: File System Cache Flush"
 
@@ -311,9 +314,9 @@ if ($r2) { Write-Log "  [OK] File system cache flushed successfully" "Green" }
 else     { Write-Log "  [WARN] Could not flush file cache (SE_INCREASE_QUOTA_PRIVILEGE needed)" "Yellow" }
 
 # ==============================================================================
-# STEP 3 — WORKING SET TRIM (all user processes, sorted by RAM usage)
+# STEP 3  --  WORKING SET TRIM (all user processes, sorted by RAM usage)
 # ==============================================================================
-Show-Section "STEP 3: Working Set Trim — All user processes (sorted by RAM usage)"
+Show-Section "STEP 3: Working Set Trim  --  All user processes (sorted by RAM usage)"
 
 $skipList = @("System","Idle","smss","csrss","wininit","winlogon","lsass",
               "services","Registry","Memory Compression","MsMpEng","audiodg",
@@ -356,7 +359,7 @@ Write-Log ("  [OK] Freed      : ~{0} MB" -f [math]::Round($freedBytes/1MB,1)) "G
 Write-Log ("  [--] Skipped    : {0} protected processes" -f $trimFail) "DarkGray"
 
 # ==============================================================================
-# STEP 4 — SERVICE LISTS
+# STEP 4  --  SERVICE LISTS
 # ==============================================================================
 
 # ---- Common (Win10 + Win11) ----
@@ -584,7 +587,7 @@ $svcsFUJITSU = [ordered]@{ "FjSessServiceAgent"="Fujitsu Session Agent"; "FUJBtn
 $svcsVAIO    = [ordered]@{ "VAIOCareService"="VAIO Care"; "VAIOEventService"="VAIO Event"; "VaioSettingsService"="VAIO Settings" }
 
 # ==============================================================================
-# STEP 4 — DISABLE COMMON WINDOWS SERVICES
+# STEP 4  --  DISABLE COMMON WINDOWS SERVICES
 # ==============================================================================
 Show-Section "STEP 4: Disable unnecessary Windows services (Common)"
 Write-Log ("  Scanning {0} common services..." -f $svcsCommon.Keys.Count) "White"
@@ -605,56 +608,54 @@ if ($isWin11) {
 }
 
 # ==============================================================================
-# STEP 5 — BRAND SERVICES
+# STEP 5  --  BRAND SERVICES
 # ==============================================================================
-Show-Section ("STEP 5: Brand services [ {0} ] — explicit list" -f $brand)
+Show-Section ("STEP 5: Brand services [ {0} ]  --  explicit list" -f $brand)
 Write-Log ("  Brand: {0}  |  Detection source: {1}" -f $brand, $brandSrc) $brandColor
 Write-Log ""
 
-$n5 = 0
 switch ($brand) {
     "DELL"               { Write-Log ("  Scanning {0} DELL services..." -f $svcsDELL.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsDELL     -Category "DELL"     -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsDELL     -Category "DELL"     -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "HP"                 { Write-Log ("  Scanning {0} HP services..." -f $svcsHP.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsHP       -Category "HP"       -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsHP       -Category "HP"       -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "LENOVO"             { Write-Log ("  Scanning {0} LENOVO services..." -f $svcsLENOVO.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsLENOVO   -Category "LENOVO"   -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsLENOVO   -Category "LENOVO"   -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "ASUS"               { Write-Log ("  Scanning {0} ASUS services..." -f $svcsASUS.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsASUS     -Category "ASUS"     -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsASUS     -Category "ASUS"     -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "MSI"                { Write-Log ("  Scanning {0} MSI services..." -f $svcsMSI.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsMSI      -Category "MSI"      -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsMSI      -Category "MSI"      -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "ACER"               { Write-Log ("  Scanning {0} ACER services..." -f $svcsACER.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsACER     -Category "ACER"     -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsACER     -Category "ACER"     -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "SAMSUNG"            { Write-Log ("  Scanning {0} SAMSUNG services..." -f $svcsSAMSUNG.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsSAMSUNG  -Category "SAMSUNG"  -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsSAMSUNG  -Category "SAMSUNG"  -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "MICROSOFT_SURFACE"  { Write-Log ("  Scanning {0} SURFACE services..." -f $svcsSURFACE.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsSURFACE  -Category "SURFACE"  -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsSURFACE  -Category "SURFACE"  -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "RAZER"              { Write-Log ("  Scanning {0} RAZER services..." -f $svcsRAZER.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsRAZER    -Category "RAZER"    -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsRAZER    -Category "RAZER"    -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "GIGABYTE"           { Write-Log ("  Scanning {0} GIGABYTE services..." -f $svcsGIGABYTE.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE" -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE" -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "TOSHIBA"            { Write-Log ("  Scanning {0} TOSHIBA services..." -f $svcsTOSHIBA.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsTOSHIBA  -Category "TOSHIBA"  -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsTOSHIBA  -Category "TOSHIBA"  -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "HUAWEI"             { Write-Log ("  Scanning {0} HUAWEI services..." -f $svcsHUAWEI.Keys.Count) "White"
-                           $n5 = Stop-And-Disable -ServiceMap $svcsHUAWEI   -Category "HUAWEI"   -Counter ([ref]$Script:SvcBrand) }
-    "LG"                 { $n5 = Stop-And-Disable -ServiceMap $svcsLG       -Category "LG"       -Counter ([ref]$Script:SvcBrand) }
-    "PANASONIC"          { $n5 = Stop-And-Disable -ServiceMap $svcsPANA     -Category "PANASONIC"-Counter ([ref]$Script:SvcBrand) }
-    "FUJITSU"            { $n5 = Stop-And-Disable -ServiceMap $svcsFUJITSU  -Category "FUJITSU"  -Counter ([ref]$Script:SvcBrand) }
-    "VAIO"               { $n5 = Stop-And-Disable -ServiceMap $svcsVAIO     -Category "VAIO"     -Counter ([ref]$Script:SvcBrand) }
+                           Stop-And-Disable -ServiceMap $svcsHUAWEI   -Category "HUAWEI"   -Counter ([ref]$Script:SvcBrand) | Out-Null }
+    "LG"                 { Stop-And-Disable -ServiceMap $svcsLG       -Category "LG"       -Counter ([ref]$Script:SvcBrand) | Out-Null }
+    "PANASONIC"          { Stop-And-Disable -ServiceMap $svcsPANA     -Category "PANASONIC"-Counter ([ref]$Script:SvcBrand) | Out-Null }
+    "FUJITSU"            { Stop-And-Disable -ServiceMap $svcsFUJITSU  -Category "FUJITSU"  -Counter ([ref]$Script:SvcBrand) | Out-Null }
+    "VAIO"               { Stop-And-Disable -ServiceMap $svcsVAIO     -Category "VAIO"     -Counter ([ref]$Script:SvcBrand) | Out-Null }
     "GENERIC_AMI"        {
-        Write-Log "  AMI BIOS detected — scanning Gigabyte + ASUS service lists..." "Yellow"
-        $na = Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE/AMI" -Counter ([ref]$Script:SvcBrand)
-        $nb = Stop-And-Disable -ServiceMap $svcsASUS     -Category "ASUS/AMI"     -Counter ([ref]$Script:SvcBrand)
-        $n5 = $na + $nb
+        Write-Log "  AMI BIOS detected  --  scanning Gigabyte + ASUS service lists..." "Yellow"
+        Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE/AMI" -Counter ([ref]$Script:SvcBrand) | Out-Null
+        Stop-And-Disable -ServiceMap $svcsASUS     -Category "ASUS/AMI"     -Counter ([ref]$Script:SvcBrand) | Out-Null
     }
-    default { Write-Log "  [i] Brand unknown — skipping explicit brand service list." "Yellow" }
+    default { Write-Log "  [i] Brand unknown  --  skipping explicit brand service list." "Yellow" }
 }
-Write-Log ("  >> Brand [{0}] total: {1} services found and handled" -f $brand, $n5) $brandColor
+Write-Log ("  >> Brand [{0}] total: {1} services found and handled" -f $brand, $Script:SvcBrand) $brandColor
 
 # ==============================================================================
-# STEP 6 — KEYWORD SCAN: catch any remaining brand services
+# STEP 6  --  KEYWORD SCAN: catch any remaining brand services
 # ==============================================================================
-Show-Section "STEP 6: Keyword scan — catch remaining brand / bloatware services"
+Show-Section "STEP 6: Keyword scan  --  catch remaining brand / bloatware services"
 
 $vendorKW = @(
     "dell","hewlett","hp ","hpinc","lenovo","thinkpad","ideapad","legion",
@@ -666,10 +667,9 @@ $vendorKW = @(
     "cyberlink","mcafee","norton","lifelock","duo security"
 )
 
+$allSvcs  = @(Get-Service -ErrorAction SilentlyContinue)
 Write-Log ("  Scanning ALL {0} services against {1} vendor keywords..." -f
-    (Get-Service -ErrorAction SilentlyContinue).Count, $vendorKW.Count) "White"
-
-$allSvcs  = Get-Service -ErrorAction SilentlyContinue
+    $allSvcs.Count, $vendorKW.Count) "White"
 $kwHits   = 0
 $kwScanned = 0
 foreach ($svc in $allSvcs) {
@@ -700,9 +700,9 @@ Write-Log ("  >> Scanned: {0} active services  |  Keyword hits: {1}" -f $kwScann
 if ($kwHits -eq 0) { Write-Log "  [OK] No additional vendor services found." "Green" }
 
 # ==============================================================================
-# STEP 7 — STARTUP ITEMS + SCHEDULED TASKS
+# STEP 7  --  STARTUP ITEMS + SCHEDULED TASKS
 # ==============================================================================
-Show-Section "STEP 7: Startup items (Registry) + Scheduled Tasks — vendor keyword clean"
+Show-Section "STEP 7: Startup items (Registry) + Scheduled Tasks  --  vendor keyword clean"
 
 $startupKeys = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -776,9 +776,9 @@ Write-Log ("  >> Startup registry entries removed : {0}" -f $Script:StartupDel) 
 Write-Log ("  >> Scheduled tasks disabled         : {0}" -f $Script:TasksOff) "Green"
 
 # ==============================================================================
-# STEP 8 — REGISTRY TUNING
+# STEP 8  --  REGISTRY TUNING
 # ==============================================================================
-Show-Section "STEP 8: Registry tuning — Memory / Telemetry / Visual / TCP / Power"
+Show-Section "STEP 8: Registry tuning  --  Memory / Telemetry / Visual / TCP / Power"
 
 $mm   = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
 $pref = "$mm\PrefetchParameters"
@@ -894,9 +894,9 @@ if ($isWin10) {
 }
 
 # ==============================================================================
-# STEP 9 — GOD MODE 8 GB TARGETED FIXES
+# STEP 9  --  GOD MODE 8 GB TARGETED FIXES
 # ==============================================================================
-Show-Section "STEP 9: GOD MODE — targeted RAM fixes (8 GB profile + Win11)"
+Show-Section "STEP 9: GOD MODE  --  targeted RAM fixes (8 GB profile + Win11)"
 
 # 9A: Memory Compression throttle
 # FIXED: .PriorityClass fails on kernel-mode process. Use NtSetInformationProcess
@@ -950,9 +950,9 @@ if ($isSSD) {
     $swapPol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
     if (-not (Test-Path $swapPol)) { New-Item -Path $swapPol -Force -ErrorAction SilentlyContinue | Out-Null }
     Set-ItemProperty -Path $swapPol -Name "DisableSwapFile" -Value 1 -Type DWord -ErrorAction SilentlyContinue
-    Write-Log "  [OK] SwapFile.sys (Win11 compressed swap) disabled — SSD detected [FIX-4]" "Green"
+    Write-Log "  [OK] SwapFile.sys (Win11 compressed swap) disabled  --  SSD detected [FIX-4]" "Green"
 } else {
-    Write-Log "  [--] HDD detected — SwapFile.sys kept for stability" "Yellow"
+    Write-Log "  [--] HDD detected  --  SwapFile.sys kept for stability" "Yellow"
 }
 
 # 9C: WSL2 memory reclaim config
@@ -962,7 +962,7 @@ if (Test-Path $wslConfig) {
     $existing = Get-Content $wslConfig -Raw -ErrorAction SilentlyContinue
     if ($existing -notlike "*autoMemoryReclaim*") {
         Add-Content -Path $wslConfig -Value "`r`n[experimental]`r`nautoMemoryReclaim=gradual" -ErrorAction SilentlyContinue
-        Write-Log "  [OK] WSL2 .wslconfig — autoMemoryReclaim=gradual appended" "Green"
+        Write-Log "  [OK] WSL2 .wslconfig  --  autoMemoryReclaim=gradual appended" "Green"
     } else {
         Write-Log "  [--] WSL2 .wslconfig already has autoMemoryReclaim configured" "DarkGray"
     }
@@ -971,7 +971,7 @@ if (Test-Path $wslConfig) {
     Write-Log "  [OK] WSL2 .wslconfig created (memory=2GB, autoMemoryReclaim=gradual)" "Green"
 }
 
-# 9D: Windows Search — already in service list but ensure SearchIndexer is killed
+# 9D: Windows Search  --  already in service list but ensure SearchIndexer is killed
 Stop-Process -Name "SearchIndexer" -Force -ErrorAction SilentlyContinue
 Write-Log "  [OK] SearchIndexer process terminated (index left intact on disk)" "Green"
 
@@ -1015,8 +1015,8 @@ if ($defWriteOK) {
         Write-Log "  [OK] Defender CPU cap 25% applied (policy path, real-time scan kept active)" "Green"
     }
 } else {
-    Write-Log "  [WARN] Defender policy blocked — machine is likely domain-joined (Precision 7670 enterprise)" "Yellow"
-    Write-Log "  [i]   Domain GPO controls Defender — this is expected and safe to ignore" "DarkGray"
+    Write-Log "  [WARN] Defender policy blocked  --  machine is likely domain-joined (Precision 7670 enterprise)" "Yellow"
+    Write-Log "  [i]   Domain GPO controls Defender  --  this is expected and safe to ignore" "DarkGray"
 }
 
 # 9F: Top-10 RAM consumers aggressive trim
@@ -1048,7 +1048,7 @@ foreach ($p in $top10) {
 }
 
 # ==============================================================================
-# STEP 10 — JUNK FILE CLEANUP
+# STEP 10  --  JUNK FILE CLEANUP
 # ==============================================================================
 Show-Section "STEP 10: System junk cleanup"
 
@@ -1102,14 +1102,13 @@ ipconfig /flushdns 2>&1 | Out-Null
 Write-Log "  [OK] DNS cache flushed" "Green"
 foreach ($log in @("Application","System","Setup")) {
     try {
-        $ec = (Get-EventLog -LogName $log -ErrorAction SilentlyContinue | Measure-Object).Count
-        Clear-EventLog -LogName $log -ErrorAction SilentlyContinue
-        Write-Log ("  [OK] Event Log [{0}] cleared ({1} entries)" -f $log, $ec) "DarkGray"
+        [System.Diagnostics.EventLog]::Clear($log)
+        Write-Log ("  [OK] Event Log [{0}] cleared" -f $log) "DarkGray"
     } catch {}
 }
 
 # ==============================================================================
-# STEP 11 — PLATFORM-SPECIFIC TWEAKS
+# STEP 11  --  PLATFORM-SPECIFIC TWEAKS
 # ==============================================================================
 Show-Section ("STEP 11: Platform-specific tweaks [{0}]" -f $winTag)
 
@@ -1144,6 +1143,11 @@ if ($isWin11) {
             Write-Log "  [OK] Pagefile -> MANUAL management (8 GB optimize)" "Green"
         }
         $pfSetting = Get-CimInstance -ClassName Win32_PageFileSetting -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $pfSetting) {
+            # Create new pagefile entry if not found (auto-managed has no row)
+            Set-WmiInstance -Class Win32_PageFileSetting -Arguments @{Name="C:\pagefile.sys";InitialSize=1024;MaximumSize=4096} -ErrorAction SilentlyContinue | Out-Null
+            $pfSetting = Get-CimInstance -ClassName Win32_PageFileSetting -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
         if ($pfSetting) {
             Set-CimInstance -InputObject $pfSetting -Property @{ InitialSize=1024; MaximumSize=4096 } -ErrorAction SilentlyContinue
             Write-Log "  [OK] Pagefile fixed: 1 GB min / 4 GB max (8 GB RAM profile)" "Green"
@@ -1165,9 +1169,9 @@ if ($isWin10) {
 }
 
 # ==============================================================================
-# STEP 12 — PERSISTENT RAM WATCHDOG  [V4 KEY FIX — BUG-1/2/5 FIXED]
+# STEP 12  --  PERSISTENT RAM WATCHDOG  [V4 KEY FIX  --  BUG-1/2/5 FIXED]
 # ==============================================================================
-Show-Section "STEP 12: Persistent RAM Watchdog — Scheduled Task [V4 KEY FIX]"
+Show-Section "STEP 12: Persistent RAM Watchdog  --  Scheduled Task [V4 KEY FIX]"
 Write-Log "  KEY FIX: This is why RAM bounces back to 96% after 2-3 min." "Magenta"
 Write-Log "  A silent watchdog task runs every 5 minutes to keep RAM clear." "Magenta"
 Write-Log ""
@@ -1179,9 +1183,9 @@ if (-not (Test-Path $watchdogDir)) {
     New-Item -Path $watchdogDir -ItemType Directory -Force | Out-Null
 }
 
-# Watchdog script content — written as a plain array of lines (no nesting issue)
+# Watchdog script content  --  written as a plain array of lines (no nesting issue)
 $wdLines = @(
-    "# RAM Watchdog v4.0 — runs silently every 5 min via Scheduled Task",
+    "# RAM Watchdog v4.0  --  runs silently every 5 min via Scheduled Task",
     "# Fires only when RAM usage exceeds threshold",
     "`$ErrorActionPreference = 'SilentlyContinue'",
     "",
@@ -1278,6 +1282,7 @@ $wdLines = @(
     "    `$ts      = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
     "    `$logPath = `"`$env:USERPROFILE\Desktop\RAM-Watchdog-Log.txt`"",
     "    Add-Content -Path `$logPath -Value `"`$ts  Triggered at `$pct% -> Free after: `$free2MB MB`" -ErrorAction SilentlyContinue",
+    "}",
     "}"
 )
 
@@ -1293,7 +1298,7 @@ $action  = New-ScheduledTaskAction `
     -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watchdogFile`""
 
 # FIXED: Task Scheduler rejects [TimeSpan]::MaxValue (P99999999D out of range).
-# Use 10 years (87600 hours) — effectively permanent, accepted by all Windows versions.
+# Use 10 years (87600 hours)  --  effectively permanent, accepted by all Windows versions.
 $trigger = New-ScheduledTaskTrigger -Once `
     -At (Get-Date).AddMinutes(5) `
     -RepetitionInterval  (New-TimeSpan -Minutes 5) `
@@ -1330,7 +1335,7 @@ try {
     Write-Log ("  [i] {0}" -f $watchdogFile) "Yellow"
 }
 
-# Run watchdog inline RIGHT NOW (first pass — visible output)
+# Run watchdog inline RIGHT NOW (first pass  --  visible output)
 Write-Log ""
 Write-Log "  Running watchdog FIRST PASS inline (visible)..." "Cyan"
 $os_wd    = Get-CimInstance Win32_OperatingSystem
@@ -1350,7 +1355,7 @@ if ($pctWD -gt 75) {
     Invoke-MemoryCommand -cmd 3 -label "Watchdog: Post-trim Standby flush"
     Write-Log "  [OK] Watchdog first pass complete (RAM was above 75%)" "Green"
 } else {
-    Write-Log "  [--] RAM below threshold (75%) — watchdog trim not triggered this pass" "DarkGray"
+    Write-Log "  [--] RAM below threshold (75%)  --  watchdog trim not triggered this pass" "DarkGray"
 }
 
 # ==============================================================================
@@ -1358,7 +1363,7 @@ if ($pctWD -gt 75) {
 # ==============================================================================
 Write-Log ""
 Write-Log "  +==================================================================+" "Cyan"
-Write-Log "  |                  SUMMARY — GOD MODE v4.0                        |" "Cyan"
+Write-Log "  |                  SUMMARY  --  GOD MODE v4.0                        |" "Cyan"
 Write-Log "  +==================================================================+" "Cyan"
 
 $os1   = Get-CimInstance Win32_OperatingSystem
@@ -1378,7 +1383,7 @@ Write-Log ("  After         :  {0} GB free  ({1}% used)" -f $free1, $pct1) "Whit
 if ($gain -gt 0) {
     Write-Log ("  Freed         :  +{0} GB" -f $gain) "Green"
 } else {
-    Write-Log "  Note          :  Immediate gain may be small — kernel clears more over ~30 sec" "Yellow"
+    Write-Log "  Note          :  Immediate gain may be small  --  kernel clears more over ~30 sec" "Yellow"
 }
 
 $ramCol = if ($pct1 -gt 80) {"Red"} elseif ($pct1 -gt 60) {"Yellow"} else {"Green"}
@@ -1391,14 +1396,14 @@ Write-Log ("  Tasks OFF     :  {0}" -f $Script:TasksOff) "Cyan"
 Write-Log ("  Startup DEL   :  {0}" -f $Script:StartupDel) "Cyan"
 Write-Log ""
 Write-Log "  ----------------------------------------------------------------" "DarkGray"
-Write-Log "  [V4] Watchdog task active — checks RAM every 5 min silently" "Magenta"
+Write-Log "  [V4] Watchdog task active  --  checks RAM every 5 min silently" "Magenta"
 Write-Log "  [V4] SwapFile.sys disabled (SSD), WSL2 reclaim configured" "Magenta"
 Write-Log ("  [V4] SessionViewSize = {0} MB (8 GB={1})" -f $svSize, $is8GB) "Magenta"
 Write-Log "  [V4] Defender CPU capped at 25% (protection still active)" "Magenta"
 Write-Log "  ----------------------------------------------------------------" "DarkGray"
 Write-Log ""
-Write-Log "  [!] RESTART recommended — registry changes need reboot to take full effect." "Yellow"
-Write-Log "  [!] Brand services DISABLED permanently — will not auto-start on boot." "Yellow"
+Write-Log "  [!] RESTART recommended  --  registry changes need reboot to take full effect." "Yellow"
+Write-Log "  [!] Brand services DISABLED permanently  --  will not auto-start on boot." "Yellow"
 Write-Log "  [!] If any Fn key / sensor / hardware feature stops working:" "Yellow"
 Write-Log "      Open: services.msc -> find the service -> set to Automatic -> Start" "Yellow"
 Write-Log ("  [!] To REMOVE watchdog: Task Scheduler -> '{0}'" -f $taskName) "Yellow"
