@@ -5,19 +5,19 @@
 #  Run modes: Full | Quick | WatchdogOnly | Restore | DryRun
 #  ------------------------------------------------------------------------------
 #  NEW IN V5 vs V4:
-#   [V5-01] RAM Profile auto-select: 4/8/16/32/64 GB — different strategy per tier
-#   [V5-02] Process Allowlist — RAMOptimizer-Config.json, user-protected processes
+#   [V5-01] RAM Profile auto-select: 4/8/16/32/64 GB  --  different strategy per tier
+#   [V5-02] Process Allowlist  --  RAMOptimizer-Config.json, user-protected processes
 #   [V5-03] Run modes: -Mode Full|Quick|WatchdogOnly|Restore|DryRun
 #   [V5-04] System Restore Point created before any changes (Full mode only)
-#   [V5-05] Undo/Restore — RAMOptimizer-Backup.json records all changes
+#   [V5-05] Undo/Restore  --  RAMOptimizer-Backup.json records all changes
 #   [V5-06] Smart Watchdog: rate-of-rise detection + per-process threshold + post-app-close hook
 #   [V5-07] GPU VRAM unused memory release via DirectX/DXGI empty driver lists
-#   [V5-08] Handle leak detection — processes with >10000 handles flagged
-#   [V5-09] Non-paged pool monitor — alerts if NPP > 1 GB (driver leak sign)
-#   [V5-10] HTML Report — before/after chart, service table, full color output
-#   [V5-11] DryRun mode — scans everything, prints plan, does nothing
-#   [V5-12] Boot task — Quick mode auto-runs 2 min after login
-#   [V5-13] Win7/8 compat layer — graceful fallback for missing CIM classes
+#   [V5-08] Handle leak detection  --  processes with >10000 handles flagged
+#   [V5-09] Non-paged pool monitor  --  alerts if NPP > 1 GB (driver leak sign)
+#   [V5-10] HTML Report  --  before/after chart, service table, full color output
+#   [V5-11] DryRun mode  --  scans everything, prints plan, does nothing
+#   [V5-12] Boot task  --  Quick mode auto-runs 2 min after login
+#   [V5-13] Win7/8 compat layer  --  graceful fallback for missing CIM classes
 #   [V5-14] Non-paged pool sizing per RAM tier
 #   [V5-15] Pagefile auto-sizing per RAM tier
 #  ------------------------------------------------------------------------------
@@ -35,6 +35,8 @@
 #  Report: Desktop\RAM-Optimize-V5-[date].html
 # ==============================================================================
 
+#Requires -Version 3
+# Win7 users: install WMF 3.0+ from Microsoft if you see "requires PowerShell 3.0"
 [CmdletBinding()]
 param(
     [ValidateSet("Full","Quick","WatchdogOnly","Restore","DryRun")]
@@ -44,6 +46,8 @@ param(
 
 # DryRun can be set via -DryRun switch OR -Mode DryRun
 if ($Mode -eq "DryRun") { $DryRun = $true; $Mode = "Full" }
+
+try { $Host.UI.RawUI.WindowTitle = "Optimize RAM v5 Ultimate Edition" } catch {}
 
 Set-StrictMode -Off   # Off for Win7 compat (strict mode has issues on PS 2.0)
 $ErrorActionPreference = "SilentlyContinue"
@@ -61,6 +65,8 @@ if (-not $_prn.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
 # ==============================================================================
 # GLOBALS
 # ==============================================================================
+# PROTECTED CORE SERVICES (never disable)
+# These services are required for Bluetooth, Wi‑Fi, Mobile Hotspot and core networking.
 $V5_VERSION  = "5.0"
 $DATA_DIR    = "C:\ProgramData\RAMOptimizer"
 $CONFIG_FILE = "$DATA_DIR\RAMOptimizer-Config.json"
@@ -76,14 +82,19 @@ $TASK_BOOT   = "RAMOptimizer-V5-BootQuick"
 if (-not (Test-Path $DATA_DIR))  { New-Item -Path $DATA_DIR  -ItemType Directory -Force | Out-Null }
 if (-not (Test-Path $WDOG_DIR))  { New-Item -Path $WDOG_DIR  -ItemType Directory -Force | Out-Null }
 
-$Script:Log      = [System.Collections.Generic.List[string]]::new()
-$Script:HtmlRows = [System.Collections.Generic.List[string]]::new()
+$Script:Log      = New-Object 'System.Collections.Generic.List[string]'
+$Script:HtmlRows = New-Object 'System.Collections.Generic.List[string]'
 $Script:Backup   = [ordered]@{ Version = $V5_VERSION; Timestamp = $TS; Services = @(); Registry = @(); Tasks = @() }
 $Script:Stats    = [ordered]@{
     SvcCommon=0; SvcBrand=0; SvcKW=0; TasksOff=0; StartupDel=0
     TrimOK=0; FreedMB=0; HandleLeaks=0; DryRunActions=0
 }
-$Script:DryRunLog = [System.Collections.Generic.List[string]]::new()
+$Script:DryRunLog = New-Object 'System.Collections.Generic.List[string]'
+
+# Load System.Web for HTML report encoding (required on all Windows versions)
+Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
+$Script:UseSystemWeb = [bool]([appdomain]::CurrentDomain.GetAssemblies() |
+    Where-Object { $_.GetName().Name -eq 'System.Web' } | Select-Object -First 1)
 
 # ==============================================================================
 # LOGGING
@@ -98,7 +109,12 @@ function Write-Log {
         "DarkYellow"{"#d4ac0d"}; "DarkGray"  {"#7f8c8d"}; "White"    {"#ecf0f1"}
         default     {"#ecf0f1"}
     }
-    $safeMsg = [System.Web.HttpUtility]::HtmlEncode($msg) -replace " ","&nbsp;"
+    if ($Script:UseSystemWeb) {
+        $safeMsg = [System.Web.HttpUtility]::HtmlEncode($msg)
+    } else {
+        $safeMsg = $msg -replace "&","&amp;" -replace "<","&lt;" -replace ">","&gt;" -replace '"','&quot;'
+    }
+    $safeMsg = $safeMsg -replace " ","&nbsp;"
     $Script:HtmlRows.Add("<tr><td style='color:$hColor;font-family:Consolas,monospace;font-size:13px;padding:1px 8px;white-space:pre'>$safeMsg</td></tr>")
 }
 
@@ -131,7 +147,9 @@ $hasCim   = ($psVer -ge 3)
 
 if ($hasCim) {
     try { $csCim  = Get-CimInstance Win32_ComputerSystem  -EA Stop } catch { $hasCim = $false }
-    try { $osCim  = Get-CimInstance Win32_OperatingSystem -EA Stop } catch {}
+    if ($hasCim) {  # [BUG-FIX V5-6] guard: nếu CS fail thì hasCim=false nhưng OS vẫn được query -> inconsistent state
+        try { $osCim  = Get-CimInstance Win32_OperatingSystem -EA Stop } catch {}
+    }
 }
 
 $cs = if ($csCim) { $csCim } else { Get-WmiObject Win32_ComputerSystem -EA SilentlyContinue }
@@ -164,9 +182,9 @@ try { $bios = if ($hasCim) { Get-CimInstance Win32_BIOS -EA SilentlyContinue } `
 
 $ramGB  = if ($cs) { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } else { 8.0 }
 $free0  = if ($os0) { [math]::Round($os0.FreePhysicalMemory / 1MB, 2) } else { 0 }
-$total  = if ($os0) { [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2) } else { $ramGB * 1024 }
+$total  = if ($os0) { [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2) } else { $ramGB }  # [BUG-FIX V5-1] was *1024 (MB) but branch returns GB -> mismatch
 
-# RAM Profile  [V5-01] — strategy differs per tier
+# RAM Profile  [V5-01]  --  strategy differs per tier
 $ramProfile = switch ($true) {
     ($ramGB -le 5.5)                      { "4GB"  }
     ($ramGB -gt 5.5  -and $ramGB -le 9.5) { "8GB"  }
@@ -190,7 +208,7 @@ $pfMax       = $profileParams.PageMax
 $wdogThresh  = $profileParams.WatchThresh
 $topNProcs   = $profileParams.TopN
 
-# SSD detection — multi-method for Win7/8 compat
+# SSD detection  --  multi-method for Win7/8 compat
 $isSSD     = $false
 $mediaType = "HDD/Unknown"
 try {
@@ -236,7 +254,7 @@ $brandColor = switch ($brand) {
 }
 
 # ==============================================================================
-# LOAD CONFIG  [V5-02] — allowlist + user preferences
+# LOAD CONFIG  [V5-02]  --  allowlist + user preferences
 # ==============================================================================
 $defaultConfig = [ordered]@{
     Version         = $V5_VERSION
@@ -378,6 +396,117 @@ function Invoke-FullKernelFlush {
     } else { Write-DryRun "SetSystemFileCacheSize reset" }
 }
 
+$Script:ProtectedServicePatterns = @(
+    "bthserv"
+    "bluetoothuserservice"
+    "bthavctpsvc"
+    "btagservice"
+    "wlan"
+    "wi-fi"
+    "wireless"
+    "sharedaccess"
+    "internet connection sharing"
+    "icssvc"
+    "mobile hotspot"
+    "dhcp"
+    "dns client"
+    "dnscache"
+    "netman"
+    "network connection"
+    "network location awareness"
+    "deviceassociationservice"
+    "device association"
+    "rasman"
+    "rasauto"
+    "nlasvc"
+    "network list service"
+    "wcmsvc"
+    "bluetooth audio gateway"
+    "bthhfsrv"
+    "bluetooth support service"
+    "wireless lan"
+    "wwansvc"
+    "netprofm"
+    "devicesflowusersvc"
+    "cdpsvc"
+    "cdpusersvc"
+    "wfdsconmgrsvc"
+    "devquerybroker"
+    "phonesvc"
+
+)
+
+function Test-ProtectedService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    $text = ((@($Name, $DisplayName) -join " ")).ToLowerInvariant()
+    foreach ($pattern in $Script:ProtectedServicePatterns) {
+        if ($text -like "*$pattern*") { return $true }
+    }
+    return $false
+}
+
+
+
+function Invoke-SafeStopService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        if ($svc.Status -eq "Running") {
+            Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-SafeSetDisabledService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+        return $true
+    } catch {
+        return $false
+    }
+}
 function Stop-And-Disable {
     param(
         [System.Collections.Specialized.OrderedDictionary]$Map,
@@ -391,6 +520,11 @@ function Stop-And-Disable {
             Write-Log ("  [ALLOW] {0,-40} (user allowlist)" -f $s) "DarkGray"
             continue
         }
+        $desc = $Map[$s]
+        if (Test-ProtectedService -Name $s -DisplayName $desc) {
+            Write-Log ("  [SKIP ] {0,-44} protected core network/bluetooth service" -f $s) "DarkGray"
+            continue
+        }
         $svc = Get-Service -Name $s -EA SilentlyContinue
         if (-not $svc) {
             $svc = Get-Service -EA SilentlyContinue |
@@ -398,18 +532,28 @@ function Stop-And-Disable {
                    Select-Object -First 1
         }
         if (-not $svc) { continue }
+        if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+            Write-Log ("  [SKIP ] {0,-44} protected core service" -f $svc.Name) "DarkGray"
+            continue
+        }
         if ($DryRun) {
-            Write-DryRun ("Would disable: {0} [{1}]" -f $svc.Name, $Map[$s])
+            Write-DryRun ("Would disable: {0} [{1}]" -f $svc.Name, $desc)
             $n++; continue
         }
         $prevStart = $svc.StartType.ToString()
         try {
             if ($svc.Status -eq "Running") {
-                Stop-Service -InputObject $svc -Force -EA SilentlyContinue
-                Write-Log ("  [STOP] {0,-44} {1}" -f $svc.Name, $Map[$s]) "DarkYellow"
+                Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
+                Write-Log ("  [STOP] {0,-44} {1}" -f $svc.Name, $desc) "DarkYellow"
             }
-            Set-Service -InputObject $svc -StartupType Disabled -EA SilentlyContinue
-            Write-Log ("  [OFF ] {0,-44} {1}" -f $svc.Name, $Map[$s]) "DarkGray"
+            Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+            # Registry double-lock: prevents OEM updaters/WU from re-enabling via service control
+            $svcReg = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svc.Name)"
+            if (Test-Path $svcReg) {
+                Set-ItemProperty $svcReg -Name "Start" -Value 4 -Type DWord -EA SilentlyContinue
+                Remove-ItemProperty $svcReg -Name "FailureActions" -EA SilentlyContinue
+            }
+            Write-Log ("  [OFF ] {0,-44} {1}" -f $svc.Name, $desc) "DarkGray"
             $Script:Backup.Services += [ordered]@{
                 Name=$svc.Name; PreviousStartType=$prevStart; DisabledBy=$Cat
             }
@@ -432,10 +576,10 @@ function Set-Reg {
 # DISPLAY HEADER
 # ==============================================================================
 Clear-Host
-$dryTag = if ($DryRun) { "  *** DRY RUN — NO CHANGES WILL BE MADE ***" } else { "" }
+$dryTag = if ($DryRun) { "  *** DRY RUN  --  NO CHANGES WILL BE MADE ***" } else { "" }
 Write-Log ""
 Write-Log "  +==================================================================+" "Cyan"
-Write-Log ("  |   RAM OPTIMIZER  --  GOD MODE  v{0}  [{1}]" -f $V5_VERSION, $winTag).PadRight(68) + "   |" "Cyan"
+Write-Log (("  |   RAM OPTIMIZER  --  GOD MODE  v{0}  [{1}]" -f $V5_VERSION, $winTag).PadRight(68) + "   |") "Cyan"
 Write-Log "  |   Supports: Win7 / Win8 / Win10 / Win11  |  All RAM sizes       |" "Cyan"
 Write-Log ("  |   Mode: {0,-20} Profile: {1,-15}             |" -f $Mode, $ramProfile) "Cyan"
 Write-Log "  +==================================================================+" "Cyan"
@@ -457,7 +601,7 @@ Write-Log ""
 # RESTORE MODE  [V5-05]
 # ==============================================================================
 if ($Mode -eq "Restore") {
-    Show-Section "RESTORE MODE — re-enabling services from backup"
+    Show-Section "RESTORE MODE  --  re-enabling services from backup"
     if (-not (Test-Path $BACKUP_FILE)) {
         Write-Log "  [!] No backup file found at: $BACKUP_FILE" "Red"
         Write-Log "  [!] Run Full mode first to create a backup." "Yellow"
@@ -469,7 +613,14 @@ if ($Mode -eq "Restore") {
         $svc = Get-Service -Name $entry.Name -EA SilentlyContinue
         if ($svc) {
             $startType = $entry.PreviousStartType
-            if (-not $startType -or $startType -eq "Disabled") { $startType = "Manual" }
+            $validTypes = @("Boot","System","Automatic","Manual","AutomaticDelayedStart")
+            if (-not $startType -or $startType -eq "Disabled" -or $validTypes -notcontains $startType) {
+                $startType = "Manual"
+            }
+            if ($DryRun) {  # [BUG-FIX V5-2] Restore mode trước đây bỏ qua DryRun flag
+                Write-DryRun ("Would restore: {0} -> {1}" -f $svc.Name, $startType)
+                $restored++; continue
+            }
             Set-Service -InputObject $svc -StartupType $startType -EA SilentlyContinue
             Write-Log ("  [RESTORE] {0,-40} -> {1}" -f $svc.Name, $startType) "Green"
             $restored++
@@ -482,12 +633,12 @@ if ($Mode -eq "Restore") {
 }
 
 # ==============================================================================
-# WATCHDOG-ONLY MODE — jump straight to step 12
+# WATCHDOG-ONLY MODE  --  jump straight to step 12
 # ==============================================================================
 $skipToWatchdog = ($Mode -eq "WatchdogOnly")
 
 # ==============================================================================
-# SYSTEM RESTORE POINT  [V5-04] — Full mode only, real changes only
+# SYSTEM RESTORE POINT  [V5-04]  --  Full mode only, real changes only
 # ==============================================================================
 if ($Mode -eq "Full" -and -not $DryRun -and $isModern) {
     Show-Section "STEP 0: System Restore Point"
@@ -501,20 +652,20 @@ if ($Mode -eq "Full" -and -not $DryRun -and $isModern) {
         Write-Log "  [i]  This is normal if restore points are disabled on this machine" "DarkGray"
     }
 } elseif ($Mode -eq "Full" -and -not $DryRun -and -not $isModern) {
-    Write-Log "  [--] Restore Point skipped (Win7/8 — use wbAdmin for backup)" "DarkGray"
+    Write-Log "  [--] Restore Point skipped (Win7/8  --  use wbAdmin for backup)" "DarkGray"
 }
 
 if (-not $skipToWatchdog) {
 
 # ==============================================================================
-# STEP 1 — KERNEL MEMORY FLUSH
+# STEP 1  --  KERNEL MEMORY FLUSH
 # ==============================================================================
 Show-Section ("STEP 1: Kernel Memory Flush  [{0} profile]" -f $ramProfile)
 Write-Log ("  Flushing: Standby / Modified / Working Sets / File Cache") "White"
 Invoke-FullKernelFlush
 
 # ==============================================================================
-# STEP 2 — WORKING SET TRIM (All processes)
+# STEP 2  --  WORKING SET TRIM (All processes)
 # ==============================================================================
 Show-Section ("STEP 2: Working Set Trim  [top {0} RAM consumers + all non-protected]" -f $topNProcs)
 
@@ -528,7 +679,7 @@ if ($DryRun) {
         Write-DryRun ("  {0,-30} {1} MB" -f $_.ProcessName, [math]::Round($_.WorkingSet64/1MB,1))
     }
 } else {
-    # Full pass — trim all
+    # Full pass  --  trim all
     $sortedProcs | ForEach-Object {
         $ws0 = $_.WorkingSet64
         if ([RamOpt5]::TrimProcess($_.Id)) {
@@ -548,15 +699,15 @@ if ($DryRun) {
     $Script:Stats.FreedMB   = [math]::Round($freedBytes/1MB,1)
 }
 
-# Top-N verbose list
+# [BUG-FIX V5-4] Bỏ filter ở display loop: query ALL procs để [PROTECTED] tag hoạt động
+# Trước đây: filter $allowList trước rồi check $config.AllowedProcesses -> luôn false
 Write-Log ("  >> Top {0} RAM consumers:" -f $topNProcs) "White"
 $rank = 1
 Get-Process -EA SilentlyContinue |
-  Where-Object { $allowList -notcontains $_.ProcessName } |
   Sort-Object WorkingSet64 -Descending | Select-Object -First $topNProcs |
   ForEach-Object {
     $pMB = [math]::Round($_.WorkingSet64/1MB,1)
-    $inAllow = ($config.AllowedProcesses -contains $_.ProcessName)
+    $inAllow = ($allowList -contains $_.ProcessName)
     $tag = if ($inAllow) {"[PROTECTED]"} else {"[trimmed]"}
     Write-Log ("  #{0,-3} {1,-28} {2,8} MB  {3}" -f $rank, $_.ProcessName, $pMB, $tag) "DarkYellow"
     $rank++
@@ -571,11 +722,12 @@ if ($Mode -eq "Quick") {
     $gain  = [math]::Round($free1 - $free0, 2)
     Write-Log ("  Before: {0} GB free  ->  After: {1} GB free  (+{2} GB)" -f $free0, $free1, $gain) "Cyan"
     $Script:Log | Out-File $LOG_TXT -Encoding UTF8 -Force
+    Write-Log ("  [LOG] Text log saved: {0}" -f $LOG_TXT) "Cyan"
     Write-Log ""; Write-Log "  Press ENTER to close..." "Cyan"; $null = Read-Host; exit 0
 }
 
 # ==============================================================================
-# STEP 3 — HANDLE LEAK DETECTION  [V5-08]
+# STEP 3  --  HANDLE LEAK DETECTION  [V5-08]
 # ==============================================================================
 Show-Section "STEP 3: Handle Leak Detection"
 
@@ -593,14 +745,14 @@ if ($config.DisableHandleLeakScan) {
                 $lk.ProcessName, $lk.HandleCount, [math]::Round($lk.WorkingSet64/1MB,1)) "Red"
             $Script:Stats.HandleLeaks++
         }
-        Write-Log "  [!] Above processes may have handle leaks — consider restarting them." "Yellow"
+        Write-Log "  [!] Above processes may have handle leaks  --  consider restarting them." "Yellow"
     } else {
         Write-Log "  [OK] No handle leaks detected (all processes below $leakThresh handles)" "Green"
     }
 }
 
 # ==============================================================================
-# STEP 4 — NON-PAGED POOL MONITOR  [V5-09]
+# STEP 4  --  NON-PAGED POOL MONITOR  [V5-09]
 # ==============================================================================
 Show-Section "STEP 4: Non-Paged Pool Monitor"
 
@@ -617,11 +769,11 @@ try {
         Write-Log ("  Non-Paged Pool : {0} MB" -f $nppMB) $nppCol
         Write-Log ("  Paged Pool     : {0} MB" -f $ppMB)  "White"
         if ($nppMB -gt 1024) {
-            Write-Log "  [!] Non-Paged Pool > 1 GB — likely a DRIVER MEMORY LEAK!" "Red"
-            Write-Log "  [!] This is not an app issue — check recent driver installs." "Red"
+            Write-Log "  [!] Non-Paged Pool > 1 GB  --  likely a DRIVER MEMORY LEAK!" "Red"
+            Write-Log "  [!] This is not an app issue  --  check recent driver installs." "Red"
             Write-Log "  [i] Run: poolmon.exe (from Windows WDK) to identify the driver." "Yellow"
         } elseif ($nppMB -gt 512) {
-            Write-Log "  [WARN] Non-Paged Pool > 512 MB — elevated, watch for growth." "Yellow"
+            Write-Log "  [WARN] Non-Paged Pool > 512 MB  --  elevated, watch for growth." "Yellow"
         } else {
             Write-Log "  [OK] Non-Paged Pool is healthy." "Green"
         }
@@ -660,7 +812,7 @@ $svcsCommon = [ordered]@{
 $svcsWin7Only = [ordered]@{
     "HomeGroupListener"="HomeGroup Listener";"HomeGroupProvider"="HomeGroup Provider"
     "WMPNetworkSvc"="WMP Network Sharing";"WerSvc"="Windows Error Reporting"
-    "wuauserv"=""   # Do NOT disable on Win7 — security updates critical
+    "wuauserv"=""   # Do NOT disable on Win7  --  security updates critical
 }
 $svcsWin7Only.Remove("wuauserv")   # safety
 $svcsWin8Only = [ordered]@{
@@ -720,7 +872,7 @@ $svcsFUJITSU=[ordered]@{"FjSessServiceAgent"="Fujitsu Session";"FUJBtnSvc"="Fuji
 $svcsVAIO=[ordered]@{"VAIOCareService"="VAIO Care";"VAIOEventService"="VAIO Event"}
 
 # ==============================================================================
-# STEP 5 — DISABLE SERVICES
+# STEP 5  --  DISABLE SERVICES
 # ==============================================================================
 Show-Section "STEP 5: Disable unnecessary services"
 Write-Log ("  Scanning {0} common services..." -f $svcsCommon.Keys.Count) "White"
@@ -734,37 +886,36 @@ if ($isWin11) { Stop-And-Disable -Map $svcsWin11Only -Cat "Win11" -Ctr ([ref]$Sc
 Write-Log ("  [OK] Common + OS-specific: {0} services handled" -f $Script:Stats.SvcCommon) "Green"
 
 # ==============================================================================
-# STEP 6 — BRAND SERVICES
+# STEP 6  --  BRAND SERVICES
 # ==============================================================================
 Show-Section ("STEP 6: Brand services [{0}]" -f $brand)
-$n6 = 0
 switch ($brand) {
-    "DELL"              { $n6 = Stop-And-Disable -Map $svcsDELL     -Cat "DELL"    -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "HP"                { $n6 = Stop-And-Disable -Map $svcsHP       -Cat "HP"      -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "LENOVO"            { $n6 = Stop-And-Disable -Map $svcsLENOVO   -Cat "LENOVO"  -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "ASUS"              { $n6 = Stop-And-Disable -Map $svcsASUS     -Cat "ASUS"    -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "MSI"               { $n6 = Stop-And-Disable -Map $svcsMSI      -Cat "MSI"     -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "ACER"              { $n6 = Stop-And-Disable -Map $svcsACER     -Cat "ACER"    -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "SAMSUNG"           { $n6 = Stop-And-Disable -Map $svcsSAMSUNG  -Cat "SAMSUNG" -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "MICROSOFT_SURFACE" { $n6 = Stop-And-Disable -Map $svcsSURFACE  -Cat "SURFACE" -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "RAZER"             { $n6 = Stop-And-Disable -Map $svcsRAZER    -Cat "RAZER"   -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "GIGABYTE"          { $n6 = Stop-And-Disable -Map $svcsGIGABYTE -Cat "GIGABYTE"-Ctr ([ref]$Script:Stats.SvcBrand) }
-    "TOSHIBA"           { $n6 = Stop-And-Disable -Map $svcsTOSHIBA  -Cat "TOSHIBA" -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "HUAWEI"            { $n6 = Stop-And-Disable -Map $svcsHUAWEI   -Cat "HUAWEI"  -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "LG"                { $n6 = Stop-And-Disable -Map $svcsLG       -Cat "LG"      -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "PANASONIC"         { $n6 = Stop-And-Disable -Map $svcsPANA     -Cat "PANASONIC"-Ctr([ref]$Script:Stats.SvcBrand) }
-    "FUJITSU"           { $n6 = Stop-And-Disable -Map $svcsFUJITSU  -Cat "FUJITSU" -Ctr ([ref]$Script:Stats.SvcBrand) }
-    "VAIO"              { $n6 = Stop-And-Disable -Map $svcsVAIO     -Cat "VAIO"    -Ctr ([ref]$Script:Stats.SvcBrand) }
+    "DELL"              { Stop-And-Disable -Map $svcsDELL     -Cat "DELL"    -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "HP"                { Stop-And-Disable -Map $svcsHP       -Cat "HP"      -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "LENOVO"            { Stop-And-Disable -Map $svcsLENOVO   -Cat "LENOVO"  -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "ASUS"              { Stop-And-Disable -Map $svcsASUS     -Cat "ASUS"    -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "MSI"               { Stop-And-Disable -Map $svcsMSI      -Cat "MSI"     -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "ACER"              { Stop-And-Disable -Map $svcsACER     -Cat "ACER"    -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "SAMSUNG"           { Stop-And-Disable -Map $svcsSAMSUNG  -Cat "SAMSUNG" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "MICROSOFT_SURFACE" { Stop-And-Disable -Map $svcsSURFACE  -Cat "SURFACE" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "RAZER"             { Stop-And-Disable -Map $svcsRAZER    -Cat "RAZER"   -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "GIGABYTE"          { Stop-And-Disable -Map $svcsGIGABYTE -Cat "GIGABYTE"-Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "TOSHIBA"           { Stop-And-Disable -Map $svcsTOSHIBA  -Cat "TOSHIBA" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "HUAWEI"            { Stop-And-Disable -Map $svcsHUAWEI   -Cat "HUAWEI"  -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "LG"                { Stop-And-Disable -Map $svcsLG       -Cat "LG"      -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "PANASONIC"         { Stop-And-Disable -Map $svcsPANA     -Cat "PANASONIC"-Ctr([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "FUJITSU"           { Stop-And-Disable -Map $svcsFUJITSU  -Cat "FUJITSU" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
+    "VAIO"              { Stop-And-Disable -Map $svcsVAIO     -Cat "VAIO"    -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null }
     "GENERIC_AMI"       {
-        Stop-And-Disable -Map $svcsGIGABYTE -Cat "AMI/GB" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null
-        $n6 = Stop-And-Disable -Map $svcsASUS -Cat "AMI/ASUS" -Ctr ([ref]$Script:Stats.SvcBrand)
+        Stop-And-Disable -Map $svcsGIGABYTE -Cat "AMI/GB"   -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null
+        Stop-And-Disable -Map $svcsASUS     -Cat "AMI/ASUS" -Ctr ([ref]$Script:Stats.SvcBrand) | Out-Null
     }
-    default { Write-Log "  [i] Unknown brand — brand services skipped." "Yellow" }
+    default { Write-Log "  [i] Unknown brand  --  brand services skipped." "Yellow" }
 }
 Write-Log ("  [OK] Brand [{0}]: {1} services handled" -f $brand, $Script:Stats.SvcBrand) $brandColor
 
 # Keyword scan for residuals
-Show-Section "STEP 6b: Keyword scan — leftover vendor services"
+Show-Section "STEP 6b: Keyword scan  --  leftover vendor services"
 $vendorKW = @("dell","hewlett","hp ","lenovo","thinkpad","asus","armoury","rog ",
               "msi ","dragon center","nahimic","acer ","predator","nitro","samsung",
               "toshiba","huawei","razer","synapse","chroma","gigabyte","rgb fusion",
@@ -777,9 +928,15 @@ foreach ($svc in $allSvcs) {
         if ($dn -like "*$kw*" -or $sn -like "*$kw*") {
             if ($DryRun) { Write-DryRun ("KW-scan would disable: {0}" -f $svc.Name); break }
             try {
-                if ($svc.Status -eq "Running") { Stop-Service $svc.Name -Force -EA SilentlyContinue }
-                Set-Service  $svc.Name -StartupType Disabled -EA SilentlyContinue
-                $Script:Backup.Services += [ordered]@{ Name=$svc.Name; PreviousStartType="Unknown(KW)"; DisabledBy="KWScan" }
+                $prevKW = $svc.StartType.ToString()
+                if ($svc.Status -eq "Running") { Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName }
+                Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+                $svcReg2 = "HKLM:\SYSTEM\CurrentControlSet\Services\$($svc.Name)"
+                if (Test-Path $svcReg2) {
+                    Set-ItemProperty $svcReg2 -Name "Start" -Value 4 -Type DWord -EA SilentlyContinue
+                    Remove-ItemProperty $svcReg2 -Name "FailureActions" -EA SilentlyContinue
+                }
+                $Script:Backup.Services += [ordered]@{ Name=$svc.Name; PreviousStartType=$prevKW; DisabledBy="KWScan" }
                 Write-Log ("  [KW] {0,-40} {1}" -f $svc.Name, $svc.DisplayName) "DarkYellow"
                 $Script:Stats.SvcKW++
             } catch {}
@@ -790,7 +947,7 @@ foreach ($svc in $allSvcs) {
 Write-Log ("  [OK] Keyword scan: {0} additional services disabled" -f $Script:Stats.SvcKW) "Green"
 
 # ==============================================================================
-# STEP 7 — STARTUP / SCHEDULED TASKS
+# STEP 7  --  STARTUP / SCHEDULED TASKS
 # ==============================================================================
 Show-Section "STEP 7: Startup items + Scheduled Tasks"
 $startupKeys = @(
@@ -848,14 +1005,14 @@ try {
 Write-Log ("  [OK] Startup entries removed: {0}   Tasks disabled: {1}" -f $Script:Stats.StartupDel, $Script:Stats.TasksOff) "Green"
 
 # ==============================================================================
-# STEP 8 — REGISTRY TUNING (RAM-Profile-aware)
+# STEP 8  --  REGISTRY TUNING (RAM-Profile-aware)
 # ==============================================================================
 Show-Section ("STEP 8: Registry tuning  [{0} profile | {1} MB SessionView]" -f $ramProfile, $svSize)
 
 $mm   = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
 $pref = "$mm\PrefetchParameters"
 
-# Memory Management — profile-aware  [V5-01, V5-14]
+# Memory Management  --  profile-aware  [V5-01, V5-14]
 Set-Reg $mm "LargeSystemCache"       0
 Set-Reg $mm "DisablePagingExecutive" 1
 Set-Reg $mm "SecondLevelDataCache"   0
@@ -880,7 +1037,7 @@ if (Test-Path $pref) {
 Set-Reg "HKLM:\SYSTEM\CurrentControlSet\Control\WMI\Autologger\ReadyBoot" "Start" 0
 Write-Log "  [OK] ReadyBoot logger disabled" "Green"
 
-# Telemetry (Win10/11 only — policies don't exist on Win7/8)
+# Telemetry (Win10/11 only  --  policies don't exist on Win7/8)
 if ($isWin10 -or $isWin11) {
     Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowTelemetry" 0
     Set-Reg "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" "AllowTelemetry" 0
@@ -946,11 +1103,11 @@ if ($isWin7 -or $isWin8) {
 }
 
 # ==============================================================================
-# STEP 9 — PLATFORM-SPECIFIC TARGETED FIXES
+# STEP 9  --  PLATFORM-SPECIFIC TARGETED FIXES
 # ==============================================================================
 Show-Section ("STEP 9: Platform GOD MODE fixes  [{0} | {1}]" -f $winTag, $ramProfile)
 
-# 9A: Memory Compression throttle (Win10/11 only — process doesn't exist on Win7/8)
+# 9A: Memory Compression throttle (Win10/11 only  --  process doesn't exist on Win7/8)
 if ($isWin10 -or $isWin11) {
     $mcProc = Get-Process -Name "Memory Compression" -EA SilentlyContinue
     if ($mcProc) {
@@ -1029,7 +1186,7 @@ if (($isWin10 -or $isWin11) -and -not $DryRun) {
 } elseif ($DryRun) { Write-DryRun ("Pagefile fix: {0} MB min / {1} MB max [{2} profile]" -f $pfMin, $pfMax, $ramProfile) }
 
 # ==============================================================================
-# STEP 10 — GPU VRAM CLEANUP  [V5-07]
+# STEP 10  --  GPU VRAM CLEANUP  [V5-07]
 # ==============================================================================
 Show-Section "STEP 10: GPU VRAM cleanup"
 
@@ -1055,8 +1212,8 @@ if ($config.DisableGpuCleanup) {
             $vramMB = [math]::Round($gpu.AdapterRAM / 1MB, 0)
             Write-Log ("  [GPU] {0,-40} VRAM: {1} MB" -f $gpu.Name, $vramMB) "Cyan"
         }
-        # Trim GPU-heavy processes (games, renderers) — same EmptyWorkingSet trick releases VRAM backing
-        $gpuProcs = @("dwm","RuntimeBroker","ShellExperienceHost")
+        # Trim GPU-heavy processes (games, renderers)  --  same EmptyWorkingSet trick releases VRAM backing
+        $gpuProcs = @("RuntimeBroker","ShellExperienceHost")  # [BUG-FIX V5-5] bỏ dwm: nằm trong $hardSafe, trim gây display corruption
         foreach ($gp in $gpuProcs) {
             $proc = Get-Process -Name $gp -EA SilentlyContinue
             if ($proc -and -not $DryRun) {
@@ -1071,7 +1228,7 @@ if ($config.DisableGpuCleanup) {
 }
 
 # ==============================================================================
-# STEP 11 — JUNK CLEANUP
+# STEP 11  --  JUNK CLEANUP
 # ==============================================================================
 Show-Section "STEP 11: System junk cleanup"
 
@@ -1109,7 +1266,7 @@ Write-Log "  [OK] DNS cache flushed" "Green"
 } # end -not $skipToWatchdog
 
 # ==============================================================================
-# STEP 12 — SMART WATCHDOG  [V5-06 + V5-12]
+# STEP 12  --  SMART WATCHDOG  [V5-06 + V5-12]
 # ==============================================================================
 Show-Section "STEP 12: Smart Watchdog + Boot Task  [V5 NEW]"
 
@@ -1117,7 +1274,7 @@ Show-Section "STEP 12: Smart Watchdog + Boot Task  [V5 NEW]"
 $wdAllowRaw = ($allowList | ForEach-Object { "'$_'" }) -join ","
 $wdLines = @(
     "# RAMOptimizer V5 Smart Watchdog",
-    "# Auto-generated — do not edit manually",
+    "# Auto-generated  --  do not edit manually",
     "# Features: rate-of-rise detection, per-process threshold, post-app-close hook",
     "",
     "param([int]`$Threshold = $wdogThresh)",
@@ -1214,10 +1371,37 @@ $wdLines = @(
     "    `$freeAfter = Get-FreeMB",
     "    `$ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
     "    Add-Content -Path `$logPath -Value ""`$ts  TRIGGER: `$triggerReason -> Free after: `$freeAfter MB"" -EA SilentlyContinue",
+    "}",
+    "",
+    "# Service guard  --  re-disable monitored services that got re-enabled by OEM updaters / WU",
+    "`$guardFile = ""$BACKUP_FILE""",
+    "if (Test-Path `$guardFile) {",
+    "    try {",
+    "        `$bkSvcs = (Get-Content `$guardFile -Raw | ConvertFrom-Json).Services",
+    "        foreach (`$ent in `$bkSvcs) {",
+    "            `$svcR = ""HKLM:\SYSTEM\CurrentControlSet\Services\`$(`$ent.Name)""",
+    "            if (Test-Path `$svcR) {",
+    "                `$sv = (Get-ItemProperty `$svcR -Name 'Start' -EA SilentlyContinue).Start",
+    "                if (`$sv -ne 4) {",
+    "                    if ((Get-Service `$ent.Name -EA SilentlyContinue).Status -eq 'Running') {",
+    "                        Stop-Service `$ent.Name -Force -EA SilentlyContinue }",
+    "                    Set-Service `$ent.Name -StartupType Disabled -EA SilentlyContinue",
+    "                    Set-ItemProperty `$svcR -Name 'Start' -Value 4 -Type DWord -EA SilentlyContinue",
+    "                    Remove-ItemProperty `$svcR -Name 'FailureActions' -EA SilentlyContinue",
+    "                    `$ts2 = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+    "                    Add-Content `$logPath -Value ""`$ts2  [GUARD] re-disabled: `$(`$ent.Name)"" -EA SilentlyContinue",
+    "                }",
+    "            }",
+    "        }",
+    "    } catch {}",
     "}"
 )
-$wdLines | Out-File -FilePath $WDOG_FILE -Encoding UTF8 -Force
-Write-Log ("  [OK] Smart watchdog script written: {0}" -f $WDOG_FILE) "Green"
+if (-not $DryRun) {  # [BUG-FIX V5-3] DryRun trước đây vẫn tạo file thật
+    $wdLines | Out-File -FilePath $WDOG_FILE -Encoding UTF8 -Force
+    Write-Log ("  [OK] Smart watchdog script written: {0}" -f $WDOG_FILE) "Green"
+} else {
+    Write-DryRun ("Would write watchdog script: {0}" -f $WDOG_FILE)
+}
 
 if (-not $DryRun) {
     # Register watchdog task (every 5 min)
@@ -1227,8 +1411,12 @@ if (-not $DryRun) {
     $wdTrigger   = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
                        -RepetitionInterval (New-TimeSpan -Minutes 5) `
                        -RepetitionDuration (New-TimeSpan -Hours 87600)
-    $wdSettings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
-                       -MultipleInstances IgnoreNew -StartWhenAvailable -Hidden
+    $wdSettings  = if ($isWin7) {
+        New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -Hidden
+    } else {
+        New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
+            -MultipleInstances IgnoreNew -StartWhenAvailable -Hidden
+    }
     $wdPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     try {
         Register-ScheduledTask -TaskName $TASK_WDOG -Action $wdAction -Trigger $wdTrigger `
@@ -1236,7 +1424,15 @@ if (-not $DryRun) {
         Write-Log ("  [OK] Watchdog task registered: '{0}'" -f $TASK_WDOG) "Green"
         Write-Log ("  [OK] Threshold: {0}% | Rate-of-rise: 5%/min | Per-proc: 3 GB" -f $wdogThresh) "Green"
     } catch {
-        Write-Log ("  [WARN] Watchdog task failed: {0}" -f $_.Exception.Message) "Yellow"
+        Write-Log ("  [WARN] Register-ScheduledTask failed: {0}" -f $_.Exception.Message) "Yellow"
+        Write-Log "  [i] Trying schtasks.exe fallback (Win7 mode)..." "Yellow"
+        $stTR = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Threshold {1}' -f $WDOG_FILE, $wdogThresh
+        & schtasks.exe /Create /F /TN $TASK_WDOG /TR $stTR /SC MINUTE /MO 5 /RU SYSTEM 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log ("  [OK] Watchdog task registered via schtasks: '{0}'" -f $TASK_WDOG) "Green"
+        } else {
+            Write-Log "  [WARN] schtasks fallback also failed  --  watchdog will not auto-run" "Red"
+        }
     }
 
     # Register boot Quick-mode task  [V5-12]
@@ -1246,15 +1442,26 @@ if (-not $DryRun) {
         $bootAction  = New-ScheduledTaskAction -Execute "powershell.exe" `
                            -Argument ("-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"{0}`" -Mode Quick" -f $bootScript)
         $bootTrigger = New-ScheduledTaskTrigger -AtLogon -Delay (New-TimeSpan -Minutes 2)
-        $bootSettings= New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
-                           -MultipleInstances IgnoreNew -Hidden
+        $bootSettings= if ($isWin7) {
+            New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -Hidden
+        } else {
+            New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew -Hidden
+        }
         $bootPrincipal= New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
         try {
             Register-ScheduledTask -TaskName $TASK_BOOT -Action $bootAction -Trigger $bootTrigger `
                 -Settings $bootSettings -Principal $bootPrincipal -Force -EA Stop | Out-Null
             Write-Log ("  [OK] Boot task registered: '{0}' (Quick mode, 2 min after login)" -f $TASK_BOOT) "Green"
         } catch {
-            Write-Log ("  [WARN] Boot task failed: {0}" -f $_.Exception.Message) "Yellow"
+            Write-Log ("  [WARN] Register-ScheduledTask failed: {0}" -f $_.Exception.Message) "Yellow"
+            Write-Log "  [i] Trying schtasks.exe fallback (Win7 mode)..." "Yellow"
+            $stBR = 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Mode Quick' -f $bootScript
+            & schtasks.exe /Create /F /TN $TASK_BOOT /TR $stBR /SC ONLOGON /DELAY 0002:00 /RU SYSTEM 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log ("  [OK] Boot task registered via schtasks: '{0}'" -f $TASK_BOOT) "Green"
+            } else {
+                Write-Log "  [WARN] schtasks fallback also failed  --  boot Quick task not installed" "Yellow"
+            }
         }
     }
 
@@ -1269,7 +1476,7 @@ if (-not $DryRun) {
         Invoke-FullKernelFlush
         Write-Log "  [OK] First-pass flush triggered and complete" "Green"
     } else {
-        Write-Log "  [--] RAM below threshold — first pass skipped" "DarkGray"
+        Write-Log "  [--] RAM below threshold  --  first pass skipped" "DarkGray"
     }
 } else {
     Write-DryRun ("Register watchdog task: {0} every 5 min (threshold {1}%)" -f $TASK_WDOG, $wdogThresh)
@@ -1292,7 +1499,7 @@ if (-not $DryRun) {
 # ==============================================================================
 Write-Log ""
 Write-Log "  +==================================================================+" "Cyan"
-Write-Log ("  |              SUMMARY — GOD MODE v{0}  [{1}]" -f $V5_VERSION, $winTag).PadRight(68) + "   |" "Cyan"
+Write-Log (("  |              SUMMARY  --  GOD MODE v{0}  [{1}]" -f $V5_VERSION, $winTag).PadRight(68) + "   |") "Cyan"
 Write-Log "  +==================================================================+" "Cyan"
 
 $os1   = if ($hasCim) { Get-CimInstance Win32_OperatingSystem } else { Get-WmiObject Win32_OperatingSystem }
@@ -1315,7 +1522,7 @@ Write-Log ("  RAM Before   :  {0} GB free   ({1}% used)" -f $free0, $pct0) $bc
 Write-Log ("  RAM After    :  {0} GB free   ({1}% used)" -f $free1, $pct1) $ac
 
 if ($gain -gt 0) { Write-Log ("  Freed        :  +{0} GB" -f $gain) "Green" }
-else { Write-Log "  [i] Immediate gain may be small — kernel keeps releasing over 30-60 sec" "Yellow" }
+else { Write-Log "  [i] Immediate gain may be small  --  kernel keeps releasing over 30-60 sec" "Yellow" }
 Write-Log ""
 Write-Log ("  Svc Common   :  {0}" -f $Script:Stats.SvcCommon) "Cyan"
 Write-Log ("  Svc Brand    :  {0}  [{1}]" -f $Script:Stats.SvcBrand, $brand) "Cyan"
@@ -1323,7 +1530,7 @@ Write-Log ("  Svc Keyword  :  {0}" -f $Script:Stats.SvcKW) "Cyan"
 Write-Log ("  Tasks OFF    :  {0}" -f $Script:Stats.TasksOff) "Cyan"
 Write-Log ("  Startup DEL  :  {0}" -f $Script:Stats.StartupDel) "Cyan"
 if ($Script:Stats.HandleLeaks -gt 0) {
-    Write-Log ("  Handle Leaks :  {0} processes flagged — check report!" -f $Script:Stats.HandleLeaks) "Red"
+    Write-Log ("  Handle Leaks :  {0} processes flagged  --  check report!" -f $Script:Stats.HandleLeaks) "Red"
 }
 if ($DryRun -and $Script:Stats.DryRunActions -gt 0) {
     Write-Log ("  DryRun actions planned: {0}" -f $Script:Stats.DryRunActions) "Magenta"
@@ -1363,7 +1570,12 @@ $barAfter  = [math]::Min(100, $pct1)
 $barColor  = if ($pct1 -gt 80) {"#e74c3c"} elseif ($pct1 -gt 60) {"#f39c12"} else {"#2ecc71"}
 $svcTotal  = $Script:Stats.SvcCommon + $Script:Stats.SvcBrand + $Script:Stats.SvcKW
 $logBody   = ($Script:HtmlRows | Out-String) -replace "`n","" -replace "`r",""
-$dryNote   = if ($DryRun) {"<div style='background:#8e44ad;color:#fff;padding:10px;border-radius:6px;margin:10px 0;font-weight:bold'>DRY RUN — NO CHANGES WERE MADE. {0} actions planned.</div>" -f $Script:Stats.DryRunActions} else {""}
+$dryNote   = if ($DryRun) {"<div style='background:#8e44ad;color:#fff;padding:10px;border-radius:6px;margin:10px 0;font-weight:bold'>DRY RUN  --  NO CHANGES WERE MADE. {0} actions planned.</div>" -f $Script:Stats.DryRunActions} else {""}
+# Pre-compute ternary values for PS3 compat (inline if inside heredoc not supported on PS3)
+$htmlLeakColor   = if ($Script:Stats.HandleLeaks -gt 0) {"#e74c3c"} else {"#2ecc71"}
+$htmlSwapBadge   = if ($isSSD) {"<span class='badge green'>SwapFile.sys OFF</span>"} else {""}
+$htmlPrefetch    = if ($isSSD) {"OFF"} else {"ON"}
+$htmlBackupBadge = if (-not $DryRun) {"<span class='badge cyan'>Backup: $BACKUP_FILE</span>"} else {""}
 
 $html = @"
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -1385,11 +1597,11 @@ $html = @"
   .green{background:#1e8449;color:#fff}.red{background:#922b21;color:#fff}
   .yellow{background:#9a7d0a;color:#fff}.cyan{background:#1a5276;color:#fff}
 </style></head><body>
-<h1>&#x1F9E0; RAM Optimizer GOD MODE v$V5_VERSION — Report</h1>
+<h1>&#x1F9E0; RAM Optimizer GOD MODE v$V5_VERSION  --  Report</h1>
 $dryNote
 <div class="card">
   <h2>&#x1F4BB; System</h2>
-  <b>OS:</b> $winName (Build $winBuild — $winTag)<br>
+  <b>OS:</b> $winName (Build $winBuild  --  $winTag)<br>
   <b>Machine:</b> $(if($cs){$cs.Manufacturer + " " + $cs.Model}else{"Unknown"})<br>
   <b>RAM:</b> $ramGB GB &nbsp;<span class="badge cyan">Profile: $ramProfile</span>&nbsp;<span class="badge cyan">SessionView: ${svSize} MB</span><br>
   <b>Disk:</b> $mediaType &nbsp; <b>Brand:</b> $brand &nbsp; <b>Mode:</b> $Mode<br>
@@ -1410,19 +1622,19 @@ $dryNote
   <div class="stat"><div class="val">$($Script:Stats.StartupDel)</div><div class="lbl">Startup Removed</div></div>
   <div class="stat"><div class="val">$($Script:Stats.TrimOK)</div><div class="lbl">Procs Trimmed</div></div>
   <div class="stat"><div class="val">$($Script:Stats.FreedMB) MB</div><div class="lbl">Working Set Freed</div></div>
-  <div class="stat"><div class="val" style="color:$(if($Script:Stats.HandleLeaks -gt 0){'#e74c3c'}else{'#2ecc71'})">$($Script:Stats.HandleLeaks)</div><div class="lbl">Handle Leaks</div></div>
+  <div class="stat"><div class="val" style="color:$htmlLeakColor">$($Script:Stats.HandleLeaks)</div><div class="lbl">Handle Leaks</div></div>
 </div>
 <div class="card">
   <h2>&#x2699;&#xFE0F; Active Fixes</h2>
   <span class="badge green">Watchdog $wdogThresh% + Rate-of-rise</span>
   <span class="badge green">Boot Quick Task</span>
   <span class="badge green">SessionView $svSize MB</span>
-  $(if($isSSD){"<span class='badge green'>SwapFile.sys OFF</span>"})
+  $htmlSwapBadge
   <span class="badge green">ClearPageFile ON</span>
-  <span class="badge green">Prefetch $(if($isSSD){'OFF'}else{'ON'})</span>
-  <span class="badge cyan">Pagefile ${pfMin}–${pfMax} MB</span>
+  <span class="badge green">Prefetch $htmlPrefetch</span>
+  <span class="badge cyan">Pagefile ${pfMin}-${pfMax} MB</span>
   <span class="badge cyan">Profile: $ramProfile</span>
-  $(if(-not $DryRun){"<span class='badge cyan'>Backup: $BACKUP_FILE</span>"})
+  $htmlBackupBadge
   <br><br>
   <b>Config file:</b> $CONFIG_FILE<br>
   <b>Backup file:</b> $BACKUP_FILE<br>
@@ -1436,7 +1648,6 @@ $dryNote
 "@
 
 try {
-    # Add-Type System.Web for HtmlEncode — fallback if not available
     $html | Out-File $LOG_HTML -Encoding UTF8 -Force
     Write-Log ("  [LOG] HTML report: {0}" -f $LOG_HTML) "Cyan"
     Write-Log "  [i]  Open the HTML file in any browser for a full visual report" "DarkGray"
