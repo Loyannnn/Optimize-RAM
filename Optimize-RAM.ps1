@@ -1,32 +1,32 @@
-# Optimize-RAM.ps1 -- Toi uu RAM Windows 11 (bat ky dung luong)
-# Chay bang: powershell -ExecutionPolicy Bypass -File Optimize-RAM.ps1
-# Yeu cau: Administrator
+# Optimize-RAM.ps1 -- Windows 11 RAM Optimizer (any RAM capacity)
+# Run with: powershell -ExecutionPolicy Bypass -File Optimize-RAM.ps1
+# Requirement: Administrator
 
 # ---- Admin check ----
 $ap = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $ap.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "[!] Can quyen Administrator!" -ForegroundColor Red
+    Write-Host "[!] Administrator privileges required!" -ForegroundColor Red
     pause; exit
 }
 
-# ---- Snapshot RAM truoc ----
+# ---- RAM snapshot before optimization ----
 $os0      = Get-CimInstance Win32_OperatingSystem
 $free0    = [math]::Round($os0.FreePhysicalMemory  / 1MB, 2)
 $total    = [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2)
 Write-Host ""
-Write-Host "  RAM tong: ${total} GB   Dang ranh: ${free0} GB" -ForegroundColor White
+Write-Host "  Total RAM: ${total} GB   Available: ${free0} GB" -ForegroundColor White
 
 # ==============================================================
-# BUOC 1 -- XA STANDBY LIST + MODIFIED LIST (kernel cache)
-# Day la phan lon nhat: tren may 32GB Windows giu 4-8GB Standby
-# Dung NtSetSystemInformation voi SystemMemoryListCommand
+# STEP 1 -- XA STANDBY LIST + MODIFIED LIST (kernel cache)
+# This is the largest portion: tren may 32GB Windows giu 4-8GB Standby
+# Using NtSetSystemInformation with SystemMemoryListCommand
 # 4 = MemoryFlushModifiedList
 # 3 = MemoryPurgeStandbyList
 # 1 = MemoryEmptyWorkingSets (tat ca process, khong phan biet kich co)
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  BUOC 1: Xa Standby List + kernel cache" -ForegroundColor Cyan
+Write-Host "  STEP 1: Clear Standby List + Kernel Cache" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $ntdllCode = @"
@@ -43,8 +43,8 @@ if (-not ([System.Management.Automation.PSTypeName]"NtMem").Type) {
     Add-Type -TypeDefinition $ntdllCode -ErrorAction SilentlyContinue
 }
 
-# Can SE_INCREASE_QUOTA_NAME va SE_PROFILE_SINGLE_PROCESS_NAME
-# Lay bang AdjustTokenPrivileges
+# Requires SE_INCREASE_QUOTA_NAME and SE_PROFILE_SINGLE_PROCESS_NAME
+# Obtained via AdjustTokenPrivileges
 $privCode = @"
 using System;
 using System.Runtime.InteropServices;
@@ -96,19 +96,19 @@ function Invoke-MemoryCommand {
     }
 }
 
-Invoke-MemoryCommand -cmd 4 -label "Flush Modified List (trang thai dirty -> standby)"
+Invoke-MemoryCommand -cmd 4 -label "Flush Modified List (dirty state -> standby)"
 Start-Sleep -Milliseconds 200
-Invoke-MemoryCommand -cmd 3 -label "Purge Standby List (giai phong cache kernel)"
+Invoke-MemoryCommand -cmd 3 -label "Purge Standby List (free kernel cache)"
 Start-Sleep -Milliseconds 200
-Invoke-MemoryCommand -cmd 1 -label "Empty Working Sets (tat ca tien trinh)"
+Invoke-MemoryCommand -cmd 1 -label "Empty Working Sets (all processes)"
 
 # ==============================================================
-# BUOC 2 -- XA FILE SYSTEM CACHE
+# STEP 2 -- XA FILE SYSTEM CACHE
 # SetSystemFileCacheSize: ep Windows giam vung cache file xuong
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  BUOC 2: Xa File System Cache" -ForegroundColor Cyan
+Write-Host "  STEP 2: Clear File System Cache" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $cacheCode = @"
@@ -129,23 +129,23 @@ $minB = [IntPtr]::Zero
 $maxB = [IntPtr]::Zero
 $flg  = 0
 [SysCache]::GetSystemFileCacheSize([ref]$minB, [ref]$maxB, [ref]$flg) | Out-Null
-Write-Host ("  Cache hien tai: min={0}MB  max={1}MB" -f ([long]$minB/1MB), ([long]$maxB/1MB)) -ForegroundColor White
+Write-Host ("  Current cache: min={0}MB  max={1}MB" -f ([long]$minB/1MB), ([long]$maxB/1MB)) -ForegroundColor White
 
-# Set ve gia tri toi thieu (buoc Windows xa phan lon cache)
+# Set to minimum value (forces Windows to release most cache)
 $r2 = [SysCache]::SetSystemFileCacheSize([IntPtr](-1), [IntPtr](-1), 0)
 if ($r2) {
-    Write-Host "  [OK] File system cache da xa" -ForegroundColor Green
+    Write-Host "  [OK] File system cache cleared" -ForegroundColor Green
 } else {
-    Write-Host "  [WARN] Khong xa duoc file cache (co the can quyen cao hon)" -ForegroundColor Yellow
+    Write-Host "  [WARN] Unable to clear file cache (higher privileges may be required)" -ForegroundColor Yellow
 }
 
 # ==============================================================
-# BUOC 3 -- TRIM WORKING SET TAT CA PROCESS (khong gio han MB)
-# FIX: Script cu chi trim process >100MB, bo sot nhieu process nho
+# STEP 3 -- TRIM WORKING SET TAT CA PROCESS (no MB limit)
+# FIX: Old script only trimmed processes >100MB and missed many small processes
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  BUOC 3: Trim Working Set tat ca tien trinh" -ForegroundColor Cyan
+Write-Host "  STEP 3: Trim Working Set all processes" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $apiCode = @"
@@ -187,17 +187,100 @@ ForEach-Object {
     } catch { $trimSkip++ }
 }
 
-Write-Host ("  [OK] Trim xong: {0} process, skip: {1}" -f $trimOK, $trimSkip) -ForegroundColor Green
-Write-Host ("  [OK] Giai phong working set: ~{0} MB" -f [math]::Round($freedTotal/1MB,1)) -ForegroundColor Green
+Write-Host ("  [OK] Trim completed: {0} process, skip: {1}" -f $trimOK, $trimSkip) -ForegroundColor Green
+Write-Host ("  [OK] Working set released: ~{0} MB" -f [math]::Round($freedTotal/1MB,1)) -ForegroundColor Green
 
 # ==============================================================
-# BUOC 4 -- TAT DICH VU KHONG CAN THIET
+# STEP 4 -- TAT DICH VU KHONG CAN THIET
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  BUOC 4: Tat dich vu khong can thiet" -ForegroundColor Cyan
+Write-Host "  STEP 4: Disable unnecessary services" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
+
+$Script:ProtectedServicePatterns = @(
+    "bthserv"
+    "bluetoothuserservice"
+    "bthavctpsvc"
+    "btagservice"
+    "wlan"
+    "wi-fi"
+    "wireless"
+    "sharedaccess"
+    "internet connection sharing"
+    "icssvc"
+    "mobile hotspot"
+    "dhcp"
+    "dns client"
+    "dnscache"
+    "netman"
+    "network connection"
+    "network location awareness"
+    "deviceassociationservice"
+    "device association"
+    "rasman"
+    "rasauto"
+    "nlasvc"
+    "network list service"
+    "wcmsvc"
+    "bluetooth audio gateway"
+    "bthhfsrv"
+    "bluetooth support service"
+    "wireless lan"
+    "wwansvc"
+    "netprofm"
+    "devicesflowusersvc"
+    "cdpsvc"
+    "cdpusersvc"
+    "wfdsconmgrsvc"
+    "devquerybroker"
+    "phonesvc"
+
+)
+
+function Test-ProtectedService {
+    param([string]$Name)
+    $text = $Name.ToLowerInvariant()
+    foreach ($pattern in $Script:ProtectedServicePatterns) {
+        if ($text -like "*$pattern*") { return $true }
+    }
+    return $false
+}
+
+
+
+function Invoke-SafeStopService {
+    param(
+        [string]$Name
+    )
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if (Test-ProtectedService -Name $Name) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if ($null -eq $svc) { return $false }
+    if ($svc.Status -eq "Running") {
+        Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+    }
+    return $true
+}
+
+function Invoke-SafeSetDisabledService {
+    param(
+        [string]$Name
+    )
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if (Test-ProtectedService -Name $Name) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if ($null -eq $svc) { return $false }
+    Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
+    return $true
+}
 $svcs = @(
     "DiagTrack","dmwappushservice","WerSvc","wercplsupport",
     "MapsBroker","SysMain","WSearch",
@@ -206,6 +289,10 @@ $svcs = @(
     "TabletInputService","WbioSrvc"
 )
 foreach ($s in $svcs) {
+    if (Test-ProtectedService -Name $s) {
+        Write-Host "  [SKIP] $s (protected core service)" -ForegroundColor DarkGray
+        continue
+    }
     $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
     if ($null -eq $svc) { continue }
     if ($svc.Status -eq "Running") {
@@ -224,14 +311,14 @@ if (Test-Path $pref) {
 $mm = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
 Set-ItemProperty -Path $mm -Name "LargeSystemCache"       -Value 0 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $mm -Name "DisablePagingExecutive" -Value 1 -ErrorAction SilentlyContinue
-Write-Host "  [OK] Superfetch + MM registry da tat" -ForegroundColor Green
+Write-Host "  [OK] Superfetch + Memory Management registry settings disabled" -ForegroundColor Green
 
 # ==============================================================
-# BUOC 5 -- DON FILE RAC
+# STEP 5 -- DON FILE RAC
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  BUOC 5: Don file rac" -ForegroundColor Cyan
+Write-Host "  STEP 5: Clean junk files" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $dirs = @($env:TEMP, "C:\Windows\Temp", "C:\Windows\Prefetch")
@@ -239,28 +326,28 @@ foreach ($d in $dirs) {
     if (Test-Path $d) {
         Get-ChildItem -Path $d -ErrorAction SilentlyContinue |
             Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-        Write-Host "  [OK] Don: $d" -ForegroundColor Green
+        Write-Host "  [OK] Cleaned: $d" -ForegroundColor Green
     }
 }
 $wu = "C:\Windows\SoftwareDistribution\Download"
 if (Test-Path $wu) {
     $wus = Get-Service "wuauserv" -ErrorAction SilentlyContinue
     if ($wus -and $wus.Status -eq "Running") {
-        Stop-Service "wuauserv" -Force -ErrorAction SilentlyContinue
+        Invoke-SafeStopService -Name "wuauserv"
         Start-Sleep -Seconds 2
     }
     Get-ChildItem $wu -ErrorAction SilentlyContinue |
         Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
     Start-Service "wuauserv" -ErrorAction SilentlyContinue
-    Write-Host "  [OK] Windows Update cache da don" -ForegroundColor Green
+    Write-Host "  [OK] Windows Update cache cleaned" -ForegroundColor Green
 }
 
 # ==============================================================
-# TONG KET
+# SUMMARY
 # ==============================================================
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  TONG KET" -ForegroundColor Cyan
+Write-Host "  SUMMARY" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $os1   = Get-CimInstance Win32_OperatingSystem
@@ -270,7 +357,7 @@ $pct1  = [math]::Round(($used1 / $total) * 100, 1)
 $gain  = [math]::Round($free1 - $free0, 2)
 
 Write-Host "  Tong RAM      : ${total} GB" -ForegroundColor White
-Write-Host "  Truoc         : ranh ${free0} GB" -ForegroundColor DarkGray
+Write-Host "  Before         : ranh ${free0} GB" -ForegroundColor DarkGray
 Write-Host "  Sau           : ranh ${free1} GB" -ForegroundColor White
 if ($gain -gt 0) {
     Write-Host "  Da giai phong : +${gain} GB" -ForegroundColor Green
