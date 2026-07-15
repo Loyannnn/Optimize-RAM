@@ -1,24 +1,24 @@
 @echo off
 cls
 echo ============================================
-echo   TOI UU RAM WINDOWS 11
-echo   Yeu cau: chay voi quyen Administrator
+echo   WINDOWS 11 RAM OPTIMIZER
+echo   Requirement: run with Administrator privileges
 echo ============================================
 echo.
 
 net session >nul 2>&1
 if %errorLevel% neq 0 (
-    echo [!] Can chay voi quyen Administrator!
-    echo     Nhan chuot phai vao file nay, chon Run as administrator
+    echo [!] Must be run as Administrator!
+    echo     Right-click this file and select Run as administrator
     pause
     exit /b 1
 )
 
-echo [*] Bat dau toi uu RAM...
+echo [*] Starting RAM optimization...
 echo.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Optimize-RAM.ps1"
 
 echo.
-echo [XONG] Hoan tat.
+echo [XONG] Completed.
 pause
