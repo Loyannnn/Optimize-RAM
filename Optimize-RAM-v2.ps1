@@ -1,12 +1,12 @@
 # ==========================================================================
 #  Optimize-RAM-v2.ps1
-#  Toi uu RAM Windows 11 -- Phien ban 2.0
+#  RAM Optimization Windows 11 -- Phien ban 2.0
 #  Tinh nang moi:
 #    - Tu dong nhan dien hang may (Dell, HP, Lenovo, ASUS, MSI, Acer, ...)
-#    - Tat dich vu theo hang + dich vu he thong khong can thiet
+#    - Disable services theo hang + dich vu he thong khong can thiet
 #    - Phan tich startup items, telemetry hang
 #    - Bao cao chi tiet theo tung buoc
-#  Yeu cau: PowerShell 5.1+ | Administrator
+#  Requirement: PowerShell 5.1+ | Administrator
 # ==========================================================================
 
 Set-StrictMode -Version Latest
@@ -15,7 +15,7 @@ $ErrorActionPreference = "SilentlyContinue"
 # ---- Admin check ----
 $ap = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $ap.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "[!] Can quyen Administrator! Nhan chuot phai -> Run as administrator" -ForegroundColor Red
+    Write-Host "[!] Administrator privileges required! Nhan chuot phai -> Run as administrator" -ForegroundColor Red
     pause; exit
 }
 
@@ -25,8 +25,8 @@ if (-not $ap.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
 Clear-Host
 Write-Host ""
 Write-Host "  ╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║       TOI UU RAM WINDOWS 11 -- Version 2.0      ║" -ForegroundColor Cyan
-Write-Host "  ║         Nhan dien hang + Tat dich vu hang        ║" -ForegroundColor Cyan
+Write-Host "  ║       RAM OPTIMIZATION WINDOWS 11 -- Version 2.0      ║" -ForegroundColor Cyan
+Write-Host "  ║         Nhan dien hang + Disable services hang        ║" -ForegroundColor Cyan
 Write-Host "  ╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
@@ -43,7 +43,7 @@ $total   = [math]::Round($os0.TotalVisibleMemorySize / 1MB, 2)
 Write-Host "  May:    $($cs.Manufacturer)  |  $($cs.Model)" -ForegroundColor White
 Write-Host "  BIOS:   $($bios.Manufacturer)  $($bios.SMBIOSBIOSVersion)" -ForegroundColor White
 Write-Host "  CPU:    $($cpu.Name)" -ForegroundColor White
-Write-Host "  RAM:    ${total} GB    |    Dang ranh: ${free0} GB" -ForegroundColor White
+Write-Host "  RAM:    ${total} GB    |    Available: ${free0} GB" -ForegroundColor White
 Write-Host ""
 
 # ---- Nhan dien hang ----
@@ -83,7 +83,7 @@ if ($brand -eq "UNKNOWN") {
 
 $brandColor = switch ($brand) {
     "DELL"    { "Blue"    }
-    "HP"      { "DarkCyan" }
+    "HP"      { "SuccessfullyrkCyan" }
     "LENOVO"  { "Red"     }
     "ASUS"    { "Blue"    }
     "MSI"     { "Red"     }
@@ -140,8 +140,8 @@ $svcsDELL = [ordered]@{
     "DellTechHubService"                = "Dell TechHub Service"
     "DellOptimizer"                     = "Dell Optimizer"
     "DellMobileConnect"                 = "Dell Mobile Connect"
-    "DellDataVault"                     = "Dell Data Vault"
-    "DellDataVaultWizard"               = "Dell Data Vault Wizard"
+    "DellSuccessfullytaVault"                     = "Dell Successfullyta Vault"
+    "DellSuccessfullytaVaultWizard"               = "Dell Successfullyta Vault Wizard"
     "DellInc.PartnerPromo"              = "Dell Partner Promo bloatware"
     "ThermalService"                    = "Dell Thermal Service"
 }
@@ -212,7 +212,7 @@ $svcsACER = [ordered]@{
     "AcerService"               = "Acer Service"
     "AcerCloudService"          = "Acer Cloud Service"
     "AcerPortalService"         = "Acer Portal Service"
-    "eDataSecurityManagement"   = "Acer eDataSecurity"
+    "eSuccessfullytaSecurityManagement"   = "Acer eSuccessfullytaSecurity"
     "AcerLaunchManager"         = "Acer Launch Manager"
     "AcerOptimizer"             = "Acer Optimizer"
     "PredatorSenseService"      = "Acer PredatorSense"
@@ -282,11 +282,127 @@ function Show-Section {
     Write-Host "  └─────────────────────────────────────────────────┘" -ForegroundColor Cyan
 }
 
+$Script:ProtectedServicePatterns = @(
+    "bthserv"
+    "bluetoothuserservice"
+    "bthavctpsvc"
+    "btagservice"
+    "wlan"
+    "wi-fi"
+    "wireless"
+    "sharedaccess"
+    "internet connection sharing"
+    "icssvc"
+    "mobile hotspot"
+    "dhcp"
+    "dns client"
+    "dnscache"
+    "netman"
+    "network connection"
+    "network location awareness"
+    "deviceassociationservice"
+    "device association"
+    "rasman"
+    "rasauto"
+    "nlasvc"
+    "network list service"
+    "wcmsvc"
+    "bluetooth audio gateway"
+    "bthhfsrv"
+    "bluetooth support service"
+    "wireless lan"
+    "wwansvc"
+    "netprofm"
+    "devicesflowusersvc"
+    "cdpsvc"
+    "cdpusersvc"
+    "wfdsconmgrsvc"
+    "devquerybroker"
+    "phonesvc"
+
+)
+
+function Test-ProtectedService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    $text = ((@($Name, $DisplayName) -join " ")).ToLowerInvariant()
+    foreach ($pattern in $Script:ProtectedServicePatterns) {
+        if ($text -like "*$pattern*") { return $true }
+    }
+    return $false
+}
+
+
+
+function Invoke-SafeStopService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        if ($svc.Status -eq "Running") {
+            Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-SafeSetDisabledService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+        return $true
+    } catch {
+        return $false
+    }
+}
 function Stop-And-Disable {
     param([hashtable]$ServiceMap, [string]$Category)
     $stopped = 0
     $notfound = 0
     foreach ($s in $ServiceMap.Keys) {
+        $desc = $ServiceMap[$s]
+        if (Test-ProtectedService -Name $s -DisplayName $desc) {
+            Write-Host "  [SKIP ] $s (protected core network/bluetooth service)" -ForegroundColor DarkGray
+            continue
+        }
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
         if ($null -eq $svc) {
             # Thu tim theo DisplayName
@@ -294,19 +410,22 @@ function Stop-And-Disable {
             if ($null -eq $svc2) { $notfound++; continue }
             $svc = $svc2
         }
-        $desc = $ServiceMap[$s]
+        if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+            Write-Host "  [SKIP ] $($svc.Name.PadRight(38))  -- protected core service" -ForegroundColor DarkGray
+            continue
+        }
         try {
             if ($svc.Status -eq "Running") {
-                Stop-Service -InputObject $svc -Force -ErrorAction SilentlyContinue
-                Write-Host "  [STOP ] $($svc.Name.PadRight(38))  -- $desc" -ForegroundColor DarkYellow
+                Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
+                Write-Host "  [STOP ] $($svc.Name.PadRight(38))  -- $desc" -ForegroundColor SuccessfullyrkYellow
             }
-            Set-Service -InputObject $svc -StartupType Disabled -ErrorAction SilentlyContinue
-            Write-Host "  [OFF  ] $($svc.Name.PadRight(38))  -- $desc" -ForegroundColor DarkGray
+            Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+            Write-Host "  [OFF  ] $($svc.Name.PadRight(38))  -- $desc" -ForegroundColor SuccessfullyrkGray
             $stopped++
         } catch {}
     }
     if ($stopped -eq 0) {
-        Write-Host "  (Khong tim thay dich vu nao cua [$Category] dang chay)" -ForegroundColor DarkGray
+        Write-Host "  (Unable tim thay dich vu nao cua [$Category] dang chay)" -ForegroundColor SuccessfullyrkGray
     }
     return $stopped
 }
@@ -314,7 +433,7 @@ function Stop-And-Disable {
 # =====================================================================
 # PHAN 1 -- XA STANDBY LIST + KERNEL CACHE
 # =====================================================================
-Show-Section "BUOC 1: Xa Standby List + kernel cache"
+Show-Section "STEP 1: Xa Standby List + kernel cache"
 
 $ntdllCode = @"
 using System;
@@ -380,7 +499,7 @@ Invoke-MemoryCommand -cmd 1 -label "Empty Working Sets (tat ca tien trinh)"
 # =====================================================================
 # PHAN 2 -- XA FILE SYSTEM CACHE
 # =====================================================================
-Show-Section "BUOC 2: Xa File System Cache"
+Show-Section "STEP 2: Xa File System Cache"
 
 $cacheCode = @"
 using System;
@@ -402,12 +521,12 @@ Write-Host ("  Cache hien tai:  min={0} MB   max={1} MB" -f ([long]$minB/1MB), (
 
 $r2 = [SysCache]::SetSystemFileCacheSize([IntPtr](-1), [IntPtr](-1), 0)
 if ($r2) { Write-Host "  [OK] File system cache da xa" -ForegroundColor Green }
-else     { Write-Host "  [WARN] Khong xa duoc file cache (can quyen cao hon)" -ForegroundColor Yellow }
+else     { Write-Host "  [WARN] Unable xa duoc file cache (can quyen cao hon)" -ForegroundColor Yellow }
 
 # =====================================================================
 # PHAN 3 -- TRIM WORKING SET TAT CA TIEN TRINH
 # =====================================================================
-Show-Section "BUOC 3: Trim Working Set tat ca tien trinh"
+Show-Section "STEP 3: Trim Working Set tat ca tien trinh"
 
 $apiCode = @"
 using System;
@@ -444,22 +563,22 @@ Get-Process -ErrorAction SilentlyContinue |
     } catch { $trimSkip++ }
 }
 Write-Host ("  [OK] Trim xong:   {0} tien trinh" -f $trimOK)  -ForegroundColor Green
-Write-Host ("  [OK] Giai phong:  ~{0} MB"         -f [math]::Round($freedTotal/1MB,1)) -ForegroundColor Green
-Write-Host ("  [--] Bo qua:       {0} tien trinh he thong" -f $trimSkip) -ForegroundColor DarkGray
+Write-Host ("  [OK] Freed:  ~{0} MB"         -f [math]::Round($freedTotal/1MB,1)) -ForegroundColor Green
+Write-Host ("  [--] Bo qua:       {0} tien trinh he thong" -f $trimSkip) -ForegroundColor SuccessfullyrkGray
 
 # =====================================================================
 # PHAN 4 -- TAT DICH VU HE THONG CHUNG (khong phu thuoc hang)
 # =====================================================================
-Show-Section "BUOC 4: Tat dich vu he thong khong can thiet"
+Show-Section "STEP 4: Disable services he thong khong can thiet"
 
-Write-Host "  >> Dang xu ly dich vu Windows chung..." -ForegroundColor White
+Write-Host "  >> Successfullyng xu ly dich vu Windows chung..." -ForegroundColor White
 $cStopped = Stop-And-Disable -ServiceMap $svcsCommon -Category "Windows System"
-Write-Host ("  >> Da xu ly: {0} dich vu" -f $cStopped) -ForegroundColor Green
+Write-Host ("  >> Successfully xu ly: {0} dich vu" -f $cStopped) -ForegroundColor Green
 
 # =====================================================================
 # PHAN 5 -- TAT DICH VU THEO HANG MAY
 # =====================================================================
-Show-Section "BUOC 5: Tat dich vu theo hang may [$brand]"
+Show-Section "STEP 5: Disable services theo hang may [$brand]"
 
 Write-Host "  >> Hang may da nhan dien: $brand" -ForegroundColor $brandColor
 Write-Host ""
@@ -483,7 +602,7 @@ switch ($brand) {
         $brandStopped = Stop-And-Disable -ServiceMap $svcsGIGABYTE -Category "GIGABYTE/AMI"
     }
     default {
-        Write-Host "  [i] Khong nhan dien duoc hang cu the." -ForegroundColor Yellow
+        Write-Host "  [i] Unable nhan dien duoc hang cu the." -ForegroundColor Yellow
         Write-Host "  [i] Chi tat dich vu Windows chung." -ForegroundColor Yellow
     }
 }
@@ -493,9 +612,9 @@ Write-Host ("  >> Tong dich vu hang [{0}] da xu ly: {1}" -f $brand, $brandStoppe
 # =====================================================================
 # PHAN 6 -- SCAN THEM: Tim dich vu hang con lai chua biet
 # =====================================================================
-Show-Section "BUOC 6: Scan dich vu hang khac trong he thong"
+Show-Section "STEP 6: Scan dich vu hang khac trong he thong"
 
-# Danh sach tu khoa bloatware pho bien them
+# Successfullynh sach tu khoa bloatware pho bien them
 $vendorKeywords = @(
     "dell","hp ","lenovo","asus","msi ","acer ","samsung","toshiba","huawei",
     "razer","gigabyte","nitro","legion","thinkpad","ideapad","zbook","elitebook",
@@ -523,20 +642,20 @@ if ($extraFound.Count -gt 0) {
         Write-Host "      $($svc2.Name.PadRight(38))  [$($svc2.Status)]  $($svc2.DisplayName)" -ForegroundColor Yellow
         try {
             if ($svc2.Status -eq "Running") {
-                Stop-Service -InputObject $svc2 -Force -ErrorAction SilentlyContinue
+                Invoke-SafeStopService -Name $svc2.Name -DisplayName $svc2.DisplayName
             }
-            Set-Service -InputObject $svc2 -StartupType Disabled -ErrorAction SilentlyContinue
-            Write-Host "      --> [OFF]" -ForegroundColor DarkGray
+            Invoke-SafeSetDisabledService -Name $svc2.Name -DisplayName $svc2.DisplayName
+            Write-Host "      --> [OFF]" -ForegroundColor SuccessfullyrkGray
         } catch {}
     }
 } else {
-    Write-Host "  [OK] Khong phat hien them dich vu hang nao." -ForegroundColor Green
+    Write-Host "  [OK] Unable phat hien them dich vu hang nao." -ForegroundColor Green
 }
 
 # =====================================================================
 # PHAN 7 -- REGISTRY: Memory Management + Telemetry
 # =====================================================================
-Show-Section "BUOC 7: Toi uu Registry Memory + Tat Telemetry"
+Show-Section "STEP 7: Toi uu Registry Memory + Tat Telemetry"
 
 # Memory Management
 $mm = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
@@ -544,7 +663,7 @@ $pref = "$mm\PrefetchParameters"
 
 Set-ItemProperty -Path $mm   -Name "LargeSystemCache"        -Value 0 -Type DWord -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $mm   -Name "DisablePagingExecutive"  -Value 1 -Type DWord -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $mm   -Name "SecondLevelDataCache"    -Value 0 -Type DWord -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $mm   -Name "SecondLevelSuccessfullytaCache"    -Value 0 -Type DWord -ErrorAction SilentlyContinue
 
 if (Test-Path $pref) {
     Set-ItemProperty -Path $pref -Name "EnablePrefetcher"    -Value 0 -Type DWord -ErrorAction SilentlyContinue
@@ -555,8 +674,8 @@ Write-Host "  [OK] Memory Management registry da toi uu" -ForegroundColor Green
 
 # Tat Windows telemetry qua registry
 $telKeys = @(
-    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"; Name = "AllowTelemetry"; Value = 0 },
-    @{ Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"; Name = "AllowTelemetry"; Value = 0 },
+    @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SuccessfullytaCollection"; Name = "AllowTelemetry"; Value = 0 },
+    @{ Path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\SuccessfullytaCollection"; Name = "AllowTelemetry"; Value = 0 },
     @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat"; Name = "DisableInventory"; Value = 1 },
     @{ Path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat"; Name = "DisablePCA"; Value = 1 }
 )
@@ -577,7 +696,7 @@ Write-Host "  [OK] Visual Effects -> Best Performance" -ForegroundColor Green
 # =====================================================================
 # PHAN 8 -- DON FILE RAC
 # =====================================================================
-Show-Section "BUOC 8: Don file rac he thong"
+Show-Section "STEP 8: Don file rac he thong"
 
 $dirs = @($env:TEMP, "C:\Windows\Temp", "C:\Windows\Prefetch", "$env:LOCALAPPDATA\Temp")
 foreach ($d in $dirs) {
@@ -594,7 +713,7 @@ $wu = "C:\Windows\SoftwareDistribution\Download"
 if (Test-Path $wu) {
     $wus = Get-Service "wuauserv" -ErrorAction SilentlyContinue
     if ($wus -and $wus.Status -eq "Running") {
-        Stop-Service "wuauserv" -Force -ErrorAction SilentlyContinue
+        Invoke-SafeStopService -Name "wuauserv"
         Start-Sleep -Seconds 2
     }
     Get-ChildItem $wu -ErrorAction SilentlyContinue |
@@ -624,23 +743,23 @@ $gain  = [math]::Round($free1 - $free0, 2)
 Write-Host ""
 Write-Host "  Hang may     :  $brand" -ForegroundColor $brandColor
 Write-Host "  Tong RAM     :  ${total} GB" -ForegroundColor White
-Write-Host "  Truoc        :  ranh ${free0} GB" -ForegroundColor DarkGray
+Write-Host "  Truoc        :  ranh ${free0} GB" -ForegroundColor SuccessfullyrkGray
 Write-Host "  Sau          :  ranh ${free1} GB" -ForegroundColor White
 
 if ($gain -gt 0) {
-    Write-Host "  Giai phong   :  +${gain} GB" -ForegroundColor Green
+    Write-Host "  Freed   :  +${gain} GB" -ForegroundColor Green
 } else {
     Write-Host "  Thay doi     :  Nho (kernel tu xa them sau vai giay)" -ForegroundColor Yellow
 }
 
 $col = if ($pct1 -gt 80) { "Red" } elseif ($pct1 -gt 60) { "Yellow" } else { "Green" }
-Write-Host "  Dang dung    :  ${used1} GB  (${pct1}%)" -ForegroundColor $col
+Write-Host "  Successfullyng dung    :  ${used1} GB  (${pct1}%)" -ForegroundColor $col
 
 Write-Host ""
-Write-Host "  ─────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  ─────────────────────────────────────────────────" -ForegroundColor SuccessfullyrkGray
 Write-Host "  [!] Mot so thay doi co hieu luc sau khi RESTART." -ForegroundColor Yellow
 Write-Host "  [!] Cac dich vu hang da tat (Disabled) se khong tu khoi dong lai." -ForegroundColor Yellow
 Write-Host "  [!] Neu may mat chuc nang nao do, dung Services.msc bat lai." -ForegroundColor Yellow
-Write-Host "  ─────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  ─────────────────────────────────────────────────" -ForegroundColor SuccessfullyrkGray
 Write-Host ""
 pause
