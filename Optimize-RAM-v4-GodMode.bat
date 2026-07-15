@@ -10,12 +10,11 @@ echo.
 
 net session >nul 2>&1
 if %errorLevel% neq 0 (
-    echo  [!] ADMINISTRATOR REQUIRED!
+    echo  [!] Requesting administrator privileges...
+    echo      ^(Windows UAC dialog will appear -- click Yes to continue^)
     echo.
-    echo      RIGHT-CLICK this file -> Run as administrator
-    echo.
-    pause
-    exit /b 1
+    PowerShell -NoProfile -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b 0
 )
 
 echo  [i] Checking Windows version...
