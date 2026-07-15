@@ -240,6 +240,117 @@ function Invoke-MemoryCommand {
     else          { Write-Log ("  [WARN] {0} -- NTSTATUS 0x{1:X}" -f $label, $r) "Yellow" }
 }
 
+$Script:ProtectedServicePatterns = @(
+    "bthserv"
+    "bluetoothuserservice"
+    "bthavctpsvc"
+    "btagservice"
+    "wlan"
+    "wi-fi"
+    "wireless"
+    "sharedaccess"
+    "internet connection sharing"
+    "icssvc"
+    "mobile hotspot"
+    "dhcp"
+    "dns client"
+    "dnscache"
+    "netman"
+    "network connection"
+    "network location awareness"
+    "deviceassociationservice"
+    "device association"
+    "rasman"
+    "rasauto"
+    "nlasvc"
+    "network list service"
+    "wcmsvc"
+    "bluetooth audio gateway"
+    "bthhfsrv"
+    "bluetooth support service"
+    "wireless lan"
+    "wwansvc"
+    "netprofm"
+    "devicesflowusersvc"
+    "cdpsvc"
+    "cdpusersvc"
+    "wfdsconmgrsvc"
+    "devquerybroker"
+    "phonesvc"
+
+)
+
+function Test-ProtectedService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    $text = ((@($Name, $DisplayName) -join " ")).ToLowerInvariant()
+    foreach ($pattern in $Script:ProtectedServicePatterns) {
+        if ($text -like "*$pattern*") { return $true }
+    }
+    return $false
+}
+
+
+
+function Invoke-SafeStopService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        if ($svc.Status -eq "Running") {
+            Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-SafeSetDisabledService {
+    param(
+        [string]$Name,
+        [string]$DisplayName = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Name) -and [string]::IsNullOrWhiteSpace($DisplayName)) { return $false }
+    if (Test-ProtectedService -Name $Name -DisplayName $DisplayName) {
+        Write-Host "  [SKIP] $Name (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    $svc = $null
+    if ($Name) { $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue }
+    if ($null -eq $svc -and $DisplayName) {
+        $svc = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$DisplayName*" -or $_.Name -like "*$Name*" } | Select-Object -First 1
+    }
+    if ($null -eq $svc) { return $false }
+    if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+        Write-Host "  [SKIP] $($svc.Name) (protected core service)" -ForegroundColor DarkGray
+        return $false
+    }
+    try {
+        Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
+        return $true
+    } catch {
+        return $false
+    }
+}
 function Stop-And-Disable {
     param(
         [System.Collections.Specialized.OrderedDictionary]$ServiceMap,
@@ -252,6 +363,11 @@ function Stop-And-Disable {
     foreach ($s in $ServiceMap.Keys) {
         $checked++
         Show-Progress ("Checking [{0}/{1}] {2}" -f $checked, $total_in_map, $s)
+        $desc = $ServiceMap[$s]
+        if (Test-ProtectedService -Name $s -DisplayName $desc) {
+            Write-Log ("  [SKIP] {0,-44} protected core network/bluetooth service" -f $s) "DarkGray"
+            continue
+        }
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
         if (-not $svc) {
             $svc = Get-Service -ErrorAction SilentlyContinue |
@@ -262,13 +378,16 @@ function Stop-And-Disable {
             Write-Host ("  [--]  {0,-42} not found on this system" -f $s) -ForegroundColor DarkGray
             continue
         }
-        $desc = $ServiceMap[$s]
+        if (Test-ProtectedService -Name $svc.Name -DisplayName $svc.DisplayName) {
+            Write-Log ("  [SKIP] {0,-44} protected core service" -f $svc.Name) "DarkGray"
+            continue
+        }
         try {
             if ($svc.Status -eq "Running") {
-                Stop-Service -InputObject $svc -Force -ErrorAction SilentlyContinue
+                Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
                 Write-Log ("  [STOP] {0,-44} {1}" -f $svc.Name, $desc) "DarkYellow"
             }
-            Set-Service -InputObject $svc -StartupType Disabled -ErrorAction SilentlyContinue
+            Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
             Write-Log ("  [OFF ] {0,-44} {1}" -f $svc.Name, $desc) "DarkGray"
             $count++
             if ($Counter) { $Counter.Value++ }
@@ -682,10 +801,10 @@ foreach ($svc in $allSvcs) {
             Write-Log ("  [KW-HIT] '{0}' matched keyword '{1}'" -f $svc.Name, $kw) "Yellow"
             try {
                 if ($svc.Status -eq "Running") {
-                    Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue
+                    Invoke-SafeStopService -Name $svc.Name -DisplayName $svc.DisplayName
                     Write-Log ("  [STOP]   {0,-44} {1}" -f $svc.Name, $svc.DisplayName) "DarkYellow"
                 }
-                Set-Service $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
+                Invoke-SafeSetDisabledService -Name $svc.Name -DisplayName $svc.DisplayName
                 Write-Log ("  [OFF ]   {0,-44} {1}" -f $svc.Name, $svc.DisplayName) "DarkGray"
                 $kwHits++
                 $Script:SvcKW++
@@ -1088,7 +1207,7 @@ $wu = "C:\Windows\SoftwareDistribution\Download"
 if (Test-Path $wu) {
     $wus = Get-Service "wuauserv" -ErrorAction SilentlyContinue
     if ($wus -and $wus.Status -eq "Running") {
-        Stop-Service "wuauserv" -Force -ErrorAction SilentlyContinue
+        Invoke-SafeStopService -Name "wuauserv"
         Start-Sleep 2
     }
     $wuCnt = (Get-ChildItem $wu -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
@@ -1128,8 +1247,8 @@ if ($isWin11) {
     # WSA
     $wsaSvc = Get-Service -Name "WsaService" -ErrorAction SilentlyContinue
     if ($wsaSvc) {
-        Stop-Service "WsaService" -Force -ErrorAction SilentlyContinue
-        Set-Service  "WsaService" -StartupType Disabled -ErrorAction SilentlyContinue
+        Invoke-SafeStopService -Name "WsaService"
+        Invoke-SafeSetDisabledService -Name "WsaService"
         Write-Log "  [OK] Windows Subsystem for Android (WSA) disabled" "Green"
     } else {
         Write-Log "  [--] WSA not installed" "DarkGray"
